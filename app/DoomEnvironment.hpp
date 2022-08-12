@@ -1,6 +1,7 @@
 #ifndef __DOOMENVIRONMENT_HPP__
 #define __DOOMENVIRONMENT_HPP__
 
+#include <assert.h>
 #include <unordered_map>
 #include <vector>
 #include <mlpack/prereqs.hpp>
@@ -24,17 +25,36 @@ public:
     static constexpr size_t NUM_CHANNELS = 3;   // RGB as floats
     static constexpr size_t DIMENSION    = INPUT_WIDTH*INPUT_HEIGHT*NUM_CHANNELS;
 
-    State(auto screenBuf) : screenBuf(screenBuf), data(DIMENSION, arma::fill::zeros) {}
+
+    State(auto screenBuf) : screenBuf(screenBuf), data(DIMENSION, arma::fill::zeros) {
+      if (screenBuf != nullptr) { this->updateDataFromBuffer(); }
+    }
+    State(const State& s): State(s.screenBuf) {}
 
     // For modifying the internal representation of the state.
     arma::colvec& Data() { return data; }
+    void SetScreenBuf(vizdoom::ImageBufferPtr buf) {
+      this->screenBuf = buf;
+      this->updateDataFromBuffer();
+    }
 
     // Encode the state
     const arma::colvec& Encode() const { return data; }
 
+    State& operator=(const State& s) {
+      this->screenBuf = s.screenBuf;
+      return *this;
+    }
+
   private:
     vizdoom::ImageBufferPtr screenBuf;
     arma::colvec data; // TODO: Make this a cube(width,height,channels)???
+
+    void updateDataFromBuffer() {
+      assert(this->screenBuf != nullptr);
+      // Update the encoded data from the current screenBuf
+      // TODO
+    }
   };
 
   class Action {

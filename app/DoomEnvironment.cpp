@@ -23,7 +23,7 @@ DoomEnvironment::DoomEnvironment(size_t maxSteps) : maxSteps(maxSteps), stepsPer
   this->game->setEpisodeTimeout(maxSteps*TICKS_PER_ACTION + EPISODE_START_TICKS);
   // Makes episodes start after 10 tics (~after raising the weapon)
   this->game->setEpisodeStartTime(EPISODE_START_TICKS);
-    // Sets ViZDoom mode (PLAYER, ASYNC_PLAYER, SPECTATOR, ASYNC_SPECTATOR, PLAYER mode is default)
+  // Sets ViZDoom mode (PLAYER, ASYNC_PLAYER, SPECTATOR, ASYNC_SPECTATOR, PLAYER mode is default)
   this->game->setMode(PLAYER);
 
   // Initialize the game. Further configuration won't take any effect from now on.
@@ -38,8 +38,14 @@ DoomEnvironment::DoomEnvironment(size_t maxSteps) : maxSteps(maxSteps), stepsPer
  * @return The current, calculated reward for the the given state-action pair.
  */
 double DoomEnvironment::Sample(const DoomEnvironment::State& state, const DoomEnvironment::Action& action, DoomEnvironment::State& nextState) {
+  // Advance the state and collect the reward (MUST be done before setting the next state!)
+  auto reward = this->Sample(state, action);
 
-  return 0.0;
+  // Setup the next state
+  auto gameState = this->game->getState();
+  nextState.SetScreenBuf(gameState->screenBuffer);
+
+  return reward;
 }
 
 double DoomEnvironment::Sample(const DoomEnvironment::State& state, const DoomEnvironment::Action& action) {
@@ -47,12 +53,13 @@ double DoomEnvironment::Sample(const DoomEnvironment::State& state, const DoomEn
   auto gameActionVec = this->actionMap[action.action];
   
   // Calculate the current action and total state reward based on our reward variables
+  // NOTE: You can make a "prolonged" action and skip frames: double reward = game->makeAction(choice(actions), skiprate)
   auto reward = this->game->makeAction(gameActionVec);
   for (auto& [varType, varPtr] : this->rewardVars) { 
     reward += varPtr->updateAndCalculateReward(game);
   }
   // If the map end is reached the agent gets a big fat reward
-  if (this->game->isMapEnded()) {
+  if (this->game->isMapEnded()) { // NOTE: isMapEnded was added to the DoomGame class manually and ViZDoom was recompiled with it!
     reward += 100.0;
   }
 
