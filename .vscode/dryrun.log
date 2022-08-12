@@ -1,0 +1,6 @@
+make --dry-run --always-make --keep-going --print-directory
+make: Entering directory `/Users/beowulf/projects/doom_rl'
+make: Leaving directory `/Users/beowulf/projects/doom_rl'
+ 
+make: *** No targets specified and no makefile found.  Stop.
+
