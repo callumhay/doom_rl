@@ -10,8 +10,8 @@ class DoomRewardVariable {
 public: 
   virtual ~DoomRewardVariable(){}
 
-  virtual void reinit(vizdoom::DoomGame* game) = 0;
-  virtual double updateAndCalculateReward(vizdoom::DoomGame* game) = 0;
+  virtual void reinit(vizdoom::DoomGame& game) = 0;
+  virtual double updateAndCalculateReward(vizdoom::DoomGame& game) = 0;
 
 protected:
   DoomRewardVariable(){}
@@ -24,13 +24,13 @@ public:
     varType(varType), varDescription(varDescription), currValue(0) {}
   ~DoomRewardVariableT(){};
 
-  void reinit(vizdoom::DoomGame* game) override {
-    this->currValue = static_cast<T>(game->getGameVariable(this->varType));
+  void reinit(vizdoom::DoomGame& game) override {
+    this->currValue = static_cast<T>(game.getGameVariable(this->varType));
     std::cout << "Initial " << this->varDescription << ":\t\t\t" << this->currValue << std::endl;
   }
 
-  double updateAndCalculateReward(vizdoom::DoomGame* game) override {
-    auto newValue = static_cast<T>(game->getGameVariable(this->varType));
+  double updateAndCalculateReward(vizdoom::DoomGame& game) override {
+    auto newValue = static_cast<T>(game.getGameVariable(this->varType));
     double reward = 0.0;
     if (newValue != this->currValue) {
       std::cout << this->varDescription << " changed to " << newValue << std::endl;

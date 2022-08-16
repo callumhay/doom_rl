@@ -1,15 +1,20 @@
+#include <assert.h>
 #include <utility>
+#include <limits>
 
 #include "ViZDoom.h"
 #include "DoomEnvironment.hpp"
 
 using namespace vizdoom;
 
-typedef DoomEnvironment::Action::actions ActionType;
-const size_t EPISODE_START_TICKS = 10;
-const size_t TICKS_PER_ACTION    = 1;
+using ActionType = DoomEnvironment::Action::Actions;
 
-DoomEnvironment::DoomEnvironment(size_t maxSteps) : maxSteps(maxSteps), stepsPerformed(0), game(new DoomGame()) {
+constexpr auto DEFAULT_FRAME_SKIP = 4;
+
+DoomEnvironment::DoomEnvironment(DoomGame* game, size_t maxSteps): 
+maxSteps(maxSteps), frameSkip(DEFAULT_FRAME_SKIP), stepsPerformed(0), game(game) {
+  assert(game != nullptr);
+
   // Setup the ViZDoom game environment...
   this->initGameOptions();
   this->initGameActions();
@@ -20,14 +25,16 @@ DoomEnvironment::DoomEnvironment(size_t maxSteps) : maxSteps(maxSteps), stepsPer
   // Set map to start (scenario .wad files can contain many maps).
   this->game->setDoomMap("E1M1");
   // Causes episodes to finish after the given number of ticks
-  this->game->setEpisodeTimeout(maxSteps*TICKS_PER_ACTION + EPISODE_START_TICKS);
+  // Just set this to a giant value, the maxSteps will control when the episode ends.
+  this->game->setEpisodeTimeout(999999);
   // Makes episodes start after 10 tics (~after raising the weapon)
-  this->game->setEpisodeStartTime(EPISODE_START_TICKS);
+  this->game->setEpisodeStartTime(10);
   // Sets ViZDoom mode (PLAYER, ASYNC_PLAYER, SPECTATOR, ASYNC_SPECTATOR, PLAYER mode is default)
   this->game->setMode(PLAYER);
 
   // Initialize the game. Further configuration won't take any effect from now on.
   this->game->init();
+  this->reset();
 }
 
 /**
@@ -38,12 +45,14 @@ DoomEnvironment::DoomEnvironment(size_t maxSteps) : maxSteps(maxSteps), stepsPer
  * @return The current, calculated reward for the the given state-action pair.
  */
 double DoomEnvironment::Sample(const DoomEnvironment::State& state, const DoomEnvironment::Action& action, DoomEnvironment::State& nextState) {
-  // Advance the state and collect the reward (MUST be done before setting the next state!)
+  // Advance the state and collect the reward
   auto reward = this->Sample(state, action);
 
-  // Setup the next state
+  // Setup the next state... (Important: it will be a nullptr if the last action finished the episode)
   auto gameState = this->game->getState();
-  nextState.SetScreenBuf(gameState->screenBuffer);
+  if (gameState != nullptr) {
+    nextState.SetScreenBuf(gameState->screenBuffer);
+  }
 
   return reward;
 }
@@ -54,9 +63,9 @@ double DoomEnvironment::Sample(const DoomEnvironment::State& state, const DoomEn
   
   // Calculate the current action and total state reward based on our reward variables
   // NOTE: You can make a "prolonged" action and skip frames: double reward = game->makeAction(choice(actions), skiprate)
-  auto reward = this->game->makeAction(gameActionVec);
+  auto reward = this->game->makeAction(gameActionVec, this->frameSkip);
   for (auto& [varType, varPtr] : this->rewardVars) { 
-    reward += varPtr->updateAndCalculateReward(game);
+    reward += varPtr->updateAndCalculateReward(this->game);
   }
   // If the map end is reached the agent gets a big fat reward
   if (this->game->isMapEnded()) { // NOTE: isMapEnded was added to the DoomGame class manually and ViZDoom was recompiled with it!
@@ -71,13 +80,10 @@ double DoomEnvironment::Sample(const DoomEnvironment::State& state, const DoomEn
  * @return Initial state for each episode.
  */
 DoomEnvironment::State DoomEnvironment::InitialSample() {
-  // Do everything we need to setup the initial state of the game...
   this->stepsPerformed = 0;
-  this->game->newEpisode();
-  // (Re)initialize all our variables (used to track rewards)
-  for (auto& [varType, varPtr] : this->rewardVars) { varPtr->reinit(this->game); }
-  
   auto state = this->game->getState();
+  assert(state != nullptr);
+  // It's possible that the game state is not initialized yet, in that case the initial state is just a blank image (zeros)
   return DoomEnvironment::State(state->screenBuffer);
 }
 
@@ -87,8 +93,28 @@ DoomEnvironment::State DoomEnvironment::InitialSample() {
  * @return true if state is a terminal state, otherwise false.
  */
 bool DoomEnvironment::IsTerminal(const DoomEnvironment::State& state) const {
-  return this->game->isEpisodeFinished() || this->game->isMapEnded() ||
-    (this->maxSteps != 0 && this->stepsPerformed >= this->maxSteps);
+  auto gameState = this->game->getState();
+  auto isTerminalState = (gameState == nullptr || this->game->isEpisodeFinished() || this->game->isMapEnded() ||
+    (this->maxSteps != 0 && this->stepsPerformed >= this->maxSteps));
+
+  if (isTerminalState) {
+    if (this->game->isMapEnded()) {
+      std::cout << "Episode finished, agent completed the map!" << std::endl;
+    }
+    else if (this->maxSteps != 0 && this->stepsPerformed >= this->maxSteps) {
+      std::cout << "Episode terminated due to the maximum number of steps being taken." << std::endl;
+    }
+    else {
+      std::cout << "Episode terminated for unknown reasons..." << std::endl;
+    }
+  }
+  return isTerminalState;
+}
+
+void DoomEnvironment::reset() {
+  this->game->newEpisode();
+  // (Re)initialize all our variables (used to track rewards)
+  for (auto& [varType, varPtr] : this->rewardVars) { varPtr->reinit(this->game); }
 }
 
 void DoomEnvironment::initGameOptions() {
@@ -101,7 +127,9 @@ void DoomEnvironment::initGameOptions() {
   this->game->setDoomScenarioPath("./bin/doom.wad");
 
   // Sets resolution. The original Doom has a resolution of 320x200
-  this->game->setScreenResolution(RES_320X200);
+  // NOTE: This function was custom added to ViZDoom
+  
+  this->game->setScreenResolution(DoomEnvironment::State::INPUT_WIDTH, DoomEnvironment::State::INPUT_HEIGHT);
   // Sets the screen buffer format. Not used here but now you can change it. Default is CRCGCB.
   this->game->setScreenFormat(RGB24);
 
@@ -188,6 +216,7 @@ void DoomEnvironment::initGameVariables() {
   auto secretsRewardFunc = [](auto oldNumSecrets, auto newNumSecrets) { return newNumSecrets > oldNumSecrets ? 10 : 0; };
   auto dmgRewardFunc = [](auto oldDmg, auto newDmg) { return newDmg > oldDmg ? 0.1*(newDmg-oldDmg) : 0; };
   auto killCountRewardFunc = [](auto oldKillCount, auto newKillCount) { return newKillCount > oldKillCount ? 10 : 0; };
+  auto ammoRewardFunc = [](auto oldAmmo, auto newAmmo) { return (newAmmo > oldAmmo ? 1.0 : 0.01) * (newAmmo-oldAmmo); };
 
   // Setup our variable-reward mapping
   this->rewardVars = { 
@@ -195,6 +224,7 @@ void DoomEnvironment::initGameVariables() {
     { ARMOR,       std::make_shared<DoomRewardVarInt<armorRewardFunc>>(ARMOR, "Player armor")          },
     { SECRETCOUNT, std::make_shared<DoomRewardVarInt<secretsRewardFunc>>(SECRETCOUNT, "Secrets found") },
     { DAMAGECOUNT, std::make_shared<DoomRewardVarInt<dmgRewardFunc>>(DAMAGECOUNT, "Monster damage")    },
-    { KILLCOUNT,   std::make_shared<DoomRewardVarInt<killCountRewardFunc>>(KILLCOUNT, "Kill count")    }
+    { KILLCOUNT,   std::make_shared<DoomRewardVarInt<killCountRewardFunc>>(KILLCOUNT, "Kill count")    },
+    { AMMO2,       std::make_shared<DoomRewardVarInt<ammoRewardFunc>>(AMMO2, "Pistol ammo count")      }
   };
 }

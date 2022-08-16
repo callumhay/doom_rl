@@ -28,34 +28,20 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-add_executable(test "") # NOTE: Sources/headers are added in the app subdirectory
-add_executable(vizdoom_test "")
-add_executable(mlpack_test "")
+#add_executable(vizdoom_test "")
+add_executable(torch_test "")
+
+find_package(Torch REQUIRED)
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+#message(STATUS "Torch libraries: ${TORCH_LIBRARIES}")
+#find_package(TorchVision REQUIRED)
 
 add_subdirectory(extern/ViZDoom)
 add_subdirectory(app)
 
-find_package(mlpack REQUIRED)
+#set_target_properties(vizdoom_test PROPERTIES LINK_DEPENDS_NO_SHARED true)
+#target_include_directories(vizdoom_test PRIVATE extern/ViZDoom/include ${ARMADILLO_INCLUDE_DIR} ${MLPACK_INCLUDE_DIRS})
+#target_link_libraries(vizdoom_test PRIVATE libvizdoom_static ${MLPACK_LIBRARIES})
 
-message(STATUS "mlpack include directory: ${MLPACK_INCLUDE_DIRS}")
-message(STATUS "mlpack libraries: ${MLPACK_LIBRARIES}")
-
-set_target_properties(vizdoom_test PROPERTIES LINK_DEPENDS_NO_SHARED true)
-target_include_directories(vizdoom_test PRIVATE extern/ViZDoom/include ${MLPACK_INCLUDE_DIRS})
-target_link_libraries(vizdoom_test PRIVATE libvizdoom_static ${MLPACK_LIBRARIES})
-
-set_target_properties(mlpack_test PROPERTIES LINK_DEPENDS_NO_SHARED true)
-target_include_directories(mlpack_test PRIVATE ${MLPACK_INCLUDE_DIRS})
-target_link_libraries(mlpack_test PRIVATE ${MLPACK_LIBRARIES})
-
-
-
-
-# Library example
-#add_library(mylib STATIC mylib.cpp)
-#target_include_directories(mylib PUBLIC include)
-#add_library(another STATIC another.cpp another.h)
-#target_link_libraries(another PUBLIC mylib)
-
-# Setting Variables
-#set(MY_VARIABLE "value")  # access via ${MY_VARIABLE}
+target_include_directories(torch_test PRIVATE extern/ViZDoom/include)
+target_link_libraries(torch_test PRIVATE "${TORCH_LIBRARIES}" libvizdoom_static) #TorchVision::TorchVision

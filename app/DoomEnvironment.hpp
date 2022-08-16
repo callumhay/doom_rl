@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <unordered_map>
 #include <vector>
+#include <memory>
 #include <mlpack/prereqs.hpp>
 
 #include "ViZDoomTypes.h"
@@ -20,46 +21,64 @@ public:
   // A state is represented by the game's raw framebuffer RGB (24 bits) at 320x200 resolution
   class State {
   public:
+    // NOTE: The width and height must match one of the settings for ViZDoomGame! (see ViZDoomGame.cpp)
     static constexpr size_t INPUT_WIDTH  = 320; // Width in pixels
     static constexpr size_t INPUT_HEIGHT = 200; // Height in pixels
-    static constexpr size_t NUM_CHANNELS = 3;   // RGB as floats
-    static constexpr size_t DIMENSION    = INPUT_WIDTH*INPUT_HEIGHT*NUM_CHANNELS;
+    static constexpr size_t NUM_CHANNELS = 3;   // RGB
+    static constexpr size_t dimension    = INPUT_WIDTH*INPUT_HEIGHT*NUM_CHANNELS;
 
-
-    State(auto screenBuf) : screenBuf(screenBuf), data(DIMENSION, arma::fill::zeros) {
+    State() : screenBuf(nullptr), data(dimension, arma::fill::zeros) {};
+    explicit State(const arma::colvec& data): screenBuf(nullptr), data(data) {};
+    explicit State(vizdoom::ImageBufferPtr screenBuf) : screenBuf(screenBuf), data(dimension, arma::fill::zeros) {
       if (screenBuf != nullptr) { this->updateDataFromBuffer(); }
-    }
-    State(const State& s): State(s.screenBuf) {}
+    };
+
+    State(const State&& rhs): screenBuf(std::move(rhs.screenBuf)), data(std::move(rhs.data)) {};
+    State& operator=(State&& rhs) {
+      if (this != &rhs) {
+        this->screenBuf = std::move(rhs.screenBuf);
+        this->data = std::move(rhs.data);
+      }
+      return *this;
+    };
+
+    // We need to define copying for mlpack
+    State(const State& rhs) : screenBuf(rhs.screenBuf), data(rhs.data) {};
+    State& operator=(const State& rhs) {
+      if (this != &rhs) {
+        this->screenBuf = rhs.screenBuf;
+        this->data = rhs.data;
+      }
+      return *this;
+    };
 
     // For modifying the internal representation of the state.
-    arma::colvec& Data() { return data; }
     void SetScreenBuf(vizdoom::ImageBufferPtr buf) {
       this->screenBuf = buf;
       this->updateDataFromBuffer();
     }
 
-    // Encode the state
-    const arma::colvec& Encode() const { return data; }
-
-    State& operator=(const State& s) {
-      this->screenBuf = s.screenBuf;
-      return *this;
-    }
+    arma::colvec& Data() { return data; }
+    // Encode the state as a column vector (this MUST be encoded as a armadillo colvec!)
+    const arma::colvec& Encode() { return data; }
 
   private:
     vizdoom::ImageBufferPtr screenBuf;
-    arma::colvec data; // TODO: Make this a cube(width,height,channels)???
+    arma::colvec data;
 
     void updateDataFromBuffer() {
       assert(this->screenBuf != nullptr);
-      // Update the encoded data from the current screenBuf
-      // TODO
+      // Update the encoded data from the current screenBuf - this is a translation of
+      // a std::shared_ptr<std::vector<uint8_t>> to an Armadillo Col<double>
+
+      // NOTE: Images are interpreted as a stored vector of (width x height x channels).
+      this->data = arma::colvec(std::vector<double>(screenBuf->begin(), screenBuf->end()));
     }
   };
 
   class Action {
   public:
-    enum actions {
+    enum Actions {
       // Base actions
       DoomActionMoveLeft = 0,
       DoomActionMoveRight,
@@ -76,12 +95,11 @@ public:
       DoomActionMoveForwardAndAttack,
     };
     
-    Action::actions action; // The currently selected action
-    static constexpr size_t size = actions::DoomActionMoveForwardAndAttack + 1;
+    Action::Actions action; // The currently selected action
+    static constexpr size_t size = static_cast<size_t>(Actions::DoomActionMoveForwardAndAttack) + 1;
   };
 
-  DoomEnvironment(size_t maxSteps);
-  ~DoomEnvironment() { delete this->game; }
+  DoomEnvironment(vizdoom::DoomGame* game, size_t maxSteps);
 
   double Sample(const State& state, const Action& action, State& nextState);
   double Sample(const State& state, const Action& action);
@@ -95,12 +113,15 @@ public:
   // Set the maximum number of steps allowed.
   size_t& MaxSteps() { return this->maxSteps; }
 
+  void reset();
+
 private:
   size_t maxSteps;
   size_t stepsPerformed;
+  size_t frameSkip;
 
   vizdoom::DoomGame* game;
-  std::unordered_map<Action::actions, std::vector<double>> actionMap;
+  std::unordered_map<Action::Actions, std::vector<double>> actionMap;
   std::unordered_map<vizdoom::GameVariable, std::shared_ptr<DoomRewardVariable>> rewardVars;
 
   void initGameOptions();

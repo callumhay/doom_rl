@@ -1,10 +1,5 @@
 # https://crascit.com/2016/01/31/enhanced-source-file-handling-with-target_sources/
-target_sources(test
-  PRIVATE
-    test.cpp
-  #PUBLIC
-)
-
+#[[
 target_sources(vizdoom_test
   PRIVATE
     vizdoom_test.cpp
@@ -13,8 +8,15 @@ target_sources(vizdoom_test
     DoomEnvironment.cpp
   #PUBLIC
 )
+]]
 
-target_sources(mlpack_test
+target_sources(torch_test
   PRIVATE
-    mlpack_test.cpp
+    torch_test.cpp
+    DoomEnv.hpp
+    DoomEnv.cpp
+    DoomGuy.hpp
+    DoomGuy.cpp
+    DoomGuyNet.hpp
+    DoomGuyNet.cpp
 )

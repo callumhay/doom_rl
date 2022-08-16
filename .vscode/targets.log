@@ -7,20 +7,16 @@ make all --print-data-base --no-builtin-variables --no-builtin-rules --question
 
 # This program built for i386-apple-darwin11.3.0
 
-# Make data base, printed on Fri Aug 12 11:41:18 2022
+# Make data base, printed on Mon Aug 15 16:05:01 2022
 
 # Variables
 
 # automatic
 <D = $(patsubst %/,%,$(dir $<))
-# environment
-RUBY_VERSION = ruby-2.2.1
 # automatic
 ?F = $(notdir $?)
 # automatic
 ?D = $(patsubst %/,%,$(dir $?))
-# environment
-rvm_path = /Users/beowulf/.rvm
 # automatic
 @D = $(patsubst %/,%,$(dir $@))
 # automatic
@@ -33,8 +29,6 @@ SHELL = /bin/sh
 VSCODE_NLS_CONFIG = {"locale":"en-us","availableLanguages":{},"_languagePackSupport":true}
 # environment
 _ = /usr/bin/make
-# environment
-_system_version = 12.5
 # makefile
 MAKEFILE_LIST := 
 # environment
@@ -42,29 +36,21 @@ __CFBundleIdentifier = com.microsoft.VSCode
 # environment
 VSCODE_CWD = /
 # environment
-GSETTINGS_SCHEMA_DIR = /opt/anaconda3/share/glib-2.0/schemas
+PATH = /usr/bin:/bin:/usr/sbin:/sbin
 # environment
-PATH = /Users/beowulf/.rvm/gems/ruby-2.2.1/bin:/Users/beowulf/.rvm/gems/ruby-2.2.1@global/bin:/Users/beowulf/.rvm/rubies/ruby-2.2.1/bin:/opt/anaconda3/bin:/opt/anaconda3/condabin:/usr/local/php5/bin:/Users/beowulf/.rvm/bin:/usr/local/opt/python/libexec/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/share/dotnet:~/.dotnet/tools:/Library/Apple/usr/bin:/Library/Frameworks/Mono.framework/Versions/Current/Commands:/usr/local/CrossPack-AVR/bin:/Users/beowulf/.cargo/bin
-# environment
-_system_name = OSX
+LaunchInstanceID = FDF17FB4-0AC6-42F5-9C15-417F13FD3C30
 # environment
 ELECTRON_RUN_AS_NODE = 1
 # default
 .FEATURES := target-specific order-only second-expansion else-if archives jobserver check-symlink
 # environment
-SSH_AUTH_SOCK = /private/tmp/com.apple.launchd.rUDeDWbeyq/Listeners
+SSH_AUTH_SOCK = /private/tmp/com.apple.launchd.tXhpYFK7TW/Listeners
 # automatic
 %F = $(notdir $%)
 # environment
-DISPLAY = /private/tmp/com.apple.launchd.DTP6XP07qY/org.macports:0
-# environment
-CONDA_EXE = /opt/anaconda3/bin/conda
-# environment
-rvm_bin_path = /Users/beowulf/.rvm/bin
+DISPLAY = /private/tmp/com.apple.launchd.zFhemwbUt9/org.macports:0
 # environment
 PWD = /Users/beowulf/projects/doom_rl
-# environment
-GEM_HOME = /Users/beowulf/.rvm/gems/ruby-2.2.1
 # environment
 ORIGINAL_XDG_CURRENT_DESKTOP = undefined
 # environment
@@ -80,23 +66,15 @@ LOGNAME = beowulf
 # environment
 APPLICATION_INSIGHTS_NO_DIAGNOSTIC_CHANNEL = true
 # environment
-CONDA_PROMPT_MODIFIER = (base) 
-# environment
 VSCODE_HANDLES_UNCAUGHT_ERRORS = true
 # automatic
 ^D = $(patsubst %/,%,$(dir $^))
-# environment
-GEM_PATH = /Users/beowulf/.rvm/gems/ruby-2.2.1:/Users/beowulf/.rvm/gems/ruby-2.2.1@global
-# environment
-CONDA_DEFAULT_ENV = base
 # environment
 XPC_FLAGS = 0x0
 # default
 MAKE = $(MAKE_COMMAND)
 # default
 MAKECMDGOALS := all
-# environment
-IRBRC = /Users/beowulf/.rvm/rubies/ruby-2.2.1/.irbrc
 # environment
 SHLVL = 1
 # default
@@ -105,12 +83,8 @@ MAKE_VERSION := 3.81
 USER = beowulf
 # makefile
 .DEFAULT_GOAL := 
-# environment
-rvm_version = 1.26.11 (latest)
 # automatic
 %D = $(patsubst %/,%,$(dir $%))
-# environment
-CONDA_SHLVL = 1
 # default
 MAKE_COMMAND := /Applications/Xcode.app/Contents/Developer/usr/bin/make
 # default
@@ -136,47 +110,31 @@ XPC_SERVICE_NAME = application.com.microsoft.VSCode.91634937.91634943
 # automatic
 +F = $(notdir $+)
 # environment
-GSETTINGS_SCHEMA_DIR_CONDA_BACKUP = 
-# environment
 __CF_USER_TEXT_ENCODING = 0x1F5:0x0:0x52
 # environment
 COMMAND_MODE = unix2003
 # default
 MAKEFILES := 
-# environment
-_system_type = Darwin
 # automatic
 <F = $(notdir $<)
 # environment
 LC_ALL = C
 # environment
-CONDA_PYTHON_EXE = /opt/anaconda3/bin/python
+SECURITYSESSIONID = 186a3
 # automatic
 ^F = $(notdir $^)
-# environment
-rvm_prefix = /Users/beowulf
 # default
 SUFFIXES := 
-# environment
-_CE_M = 
-# environment
-_system_arch = x86_64
 # default
 .INCLUDE_DIRS = /usr/local/include
 # environment
 MAKELEVEL := 0
 # environment
-CONDA_PREFIX = /opt/anaconda3
-# environment
-VSCODE_PID = 31438
-# environment
-MY_RUBY_HOME = /Users/beowulf/.rvm/rubies/ruby-2.2.1
-# environment
-_CE_CONDA = 
-# environment
 LANG = C
+# environment
+VSCODE_PID = 435
 # variable set hash-table stats:
-# Load=82/1024=8%, Rehash=0, Collisions=3/103=3%
+# Load=61/1024=6%, Rehash=0, Collisions=1/82=1%
 
 # Pattern-specific Variable Values
 
@@ -184,9 +142,9 @@ LANG = C
 
 # Directories
 
-# . (device 16777222, inode 93732040): 8 files, no impossibilities.
+# . (device 16777220, inode 93732040): 14 files, no impossibilities.
 
-# 8 files, no impossibilities in 1 directories.
+# 14 files, no impossibilities in 1 directories.
 
 # Implicit Rules
 
@@ -258,7 +216,7 @@ GNUmakefile:
 # strcache size: total = 0 / max = 0 / min = 4096 / avg = 0
 # strcache free: total = 0 / max = 0 / min = 4096 / avg = 0
 
-# Finished Make data base on Fri Aug 12 11:41:18 2022
+# Finished Make data base on Mon Aug 15 16:05:01 2022
 
  
 make: *** No rule to make target `all'.  Stop.
