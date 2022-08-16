@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+extern/CLBlast/
+extern/mlpack/
+extern/vision/
+extern/ViZDoom/
