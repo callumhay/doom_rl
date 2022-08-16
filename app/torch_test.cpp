@@ -8,12 +8,16 @@
 
 #include "DoomEnv.hpp"
 #include "DoomGuy.hpp"
+#include "DoomRLLogger.hpp"
 
 int main() {
   std::srand(42);
   auto env = std::make_unique<DoomEnv>();
 
 
+
+
+  /*
   std::vector<uint8_t> fb = {1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16};
   auto opts = torch::TensorOptions().dtype(torch::kUInt8);
   auto fbTensor = torch::from_blob(fb.data(), {4,4}, opts).clone();
@@ -29,9 +33,7 @@ int main() {
   std::cout << tensor << std::endl;
 
   auto oneValTensor = torch::tensor({1});
-  std::cout << oneValTensor << std::endl;
-
-  // auto isCudaAvailable = torch::cuda::is_available(); // someday.
-
-  // NOTE: State, if flat, should be reshaped... torch.reshape(flatArr, (200,320,3))
+  auto item = oneValTensor.item();
+  std::cout << typeid(item).name() << std::endl;
+  */
 }

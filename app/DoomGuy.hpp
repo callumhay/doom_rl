@@ -22,12 +22,15 @@ public:
   void cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, DoomEnv::Action action, double reward, bool done);
 
   // Update online action value (Q) function with a batch of experiences
-  //void learn();
+  // Returns <mean_q, loss>
+  std::tuple<double, double> learn();
 
 private:
   std::string saveDir;
   size_t currStep;
-  size_t numStepsBetweenSaves;
+  size_t stepsBetweenSaves;  // Number of steps between saving the networks to disk
+  size_t stepsBetweenSyncs;  // Number of steps between synchronizing between the Q-Target and Online networks
+  size_t stepsExplore;       // Number of steps to explore before training starts
 
   bool useCuda;
 
@@ -36,8 +39,11 @@ private:
   double explorationRate;       // 'epsilon' in the greedy-epsilon policy
   double explorationRateDecay;  // The rate with which epislon decays as the episode plays
   double explorationRateMin;    // The minimum epislon value
+  double gamma;                 // The discount factor
   
-  std::unique_ptr<DoomGuyNet> net;
+  std::shared_ptr<DoomGuyNet> net; // NOTE: This needs to be shared in order for torch::save to work
+  std::unique_ptr<torch::optim::Adam> optimizer;
+  torch::nn::SmoothL1Loss lossFn;
 
   // Data that is stored in the replay memory - an array of tensors corresponding to
   // [state, nextState, action, reward, done]
@@ -47,6 +53,13 @@ private:
   ReplayData recall();
   std::vector<ReplayData> randomSamples(size_t n);
   
+  torch::Tensor tdEstimate(torch::Tensor stateBatch, torch::Tensor actionBatch);
+  torch::Tensor tdTarget(torch::Tensor rewardBatch, torch::Tensor nextStateBatch, torch::Tensor doneBatch);
+  torch::Scalar updateQOnline(torch::Tensor tdEstimate, torch::Tensor tdTarget);
+
+  void syncQTarget();
+
+  void save();
 
 };
 

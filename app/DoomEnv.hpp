@@ -22,8 +22,8 @@ public:
     static constexpr size_t SCREEN_BUFFER_WIDTH  = 320; // Original screen buffer width in pixels
     static constexpr size_t SCREEN_BUFFER_HEIGHT = 200; // Original screen buffer height in pixels
 
-    static constexpr size_t TENSOR_INPUT_WIDTH  = 80; // 1/4 the original screen buffer size
-    static constexpr size_t TENSOR_INPUT_HEIGHT = 50;
+    static constexpr size_t TENSOR_INPUT_WIDTH  = 160; // 1/2 the original screen buffer size
+    static constexpr size_t TENSOR_INPUT_HEIGHT = 100;
 
     State(vizdoom::ImageBufferPtr screenBuf) {
       assert(screenBuf != nullptr);

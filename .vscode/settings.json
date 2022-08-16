@@ -108,6 +108,8 @@
     "stop_token": "cpp",
     "valarray": "cpp",
     "*.ipp": "cpp",
-    "*.opencl": "cpp"
+    "*.opencl": "cpp",
+    "__functional_base": "cpp",
+    "filesystem": "cpp"
   }
 }

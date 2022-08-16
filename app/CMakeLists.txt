@@ -19,4 +19,6 @@ target_sources(torch_test
     DoomGuy.cpp
     DoomGuyNet.hpp
     DoomGuyNet.cpp
+    DoomRLLogger.hpp
+    DoomRLLogger.cpp
 )
