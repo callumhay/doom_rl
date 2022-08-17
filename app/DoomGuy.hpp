@@ -16,7 +16,7 @@ public:
   DoomGuy(const std::string& saveDir);
 
   // Given a state, choose an epsilon-greedy action
-  DoomEnv::Action act(DoomEnv::StatePtr state); 
+  DoomEnv::Action act(DoomEnv::StatePtr& state); 
 
   // Add the experience to memory
   void cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, DoomEnv::Action action, double reward, bool done);
@@ -24,6 +24,9 @@ public:
   // Update online action value (Q) function with a batch of experiences
   // Returns <mean_q, loss>
   std::tuple<double, double> learn();
+
+  auto getCurrStep() const { return this->currStep; }
+  auto getExplorationRate() const { return this->explorationRate; }
 
 private:
   std::string saveDir;

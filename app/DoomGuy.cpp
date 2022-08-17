@@ -40,7 +40,7 @@ net(std::make_shared<DoomGuyNet>(
 /**
  * Given a state, choose an epsilon-greedy action and update value of step.
  */
-Action DoomGuy::act(DoomEnv::StatePtr state) {
+Action DoomGuy::act(DoomEnv::StatePtr& state) {
   auto random = static_cast<double>(std::rand()) / static_cast<double>(RAND_MAX);
 
   Action action;

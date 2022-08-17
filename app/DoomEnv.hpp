@@ -80,10 +80,9 @@ public:
   DoomEnv(size_t frameSkip=4);
   ~DoomEnv();
 
-  void reset();
-
   using StatePtr = std::unique_ptr<DoomEnv::State>;
   using StepInfo = std::tuple<StatePtr, double, bool>;
+  StatePtr reset();
   StepInfo step(const Action& a);
 
 private:
@@ -104,10 +103,15 @@ private:
 inline DoomEnv::~DoomEnv() { this->game->close(); }
 
 // Start a new episode of play/training
-inline void DoomEnv::reset() {
+inline DoomEnv::StatePtr DoomEnv::reset() {
   this->game->newEpisode();
   // (Re)initialize all our variables (used to track rewards)
   for (auto& [varType, varPtr] : this->rewardVars) { varPtr->reinit(*this->game); }
+
+  // Grab the very first state of the game and return it
+  auto gameState = this->game->getState();
+  assert(gameState != nullptr);
+  return std::make_unique<DoomEnv::State>(gameState->screenBuffer);
 }
 
 /**

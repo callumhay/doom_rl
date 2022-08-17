@@ -28,14 +28,21 @@ DoomEnv::DoomEnv(size_t frameSkip): game(std::make_unique<DoomGame>()), frameSki
 
 bool DoomEnv::isEpisodeFinished() const {
   auto gameState = this->game->getState();
-  auto isTerminalState = (gameState == nullptr || this->game->isEpisodeFinished() || this->game->isMapEnded());
+  auto isTerminalState = (
+    gameState == nullptr || this->game->isEpisodeFinished() || 
+    this->game->isPlayerDead() || this->game->isMapEnded());
 
+  
   if (isTerminalState) {
+    std::cout << "Episode finished: ";
     if (this->game->isMapEnded()) {
-      std::cout << "Episode finished, agent completed the map!" << std::endl;
+      std::cout << "Agent completed the map!" << std::endl;
+    }
+    else if (this->game->isPlayerDead()) {
+      std::cout << "Agent died!" << std::endl;
     }
     else {
-      std::cout << "Episode terminated, max steps reached." << std::endl;
+      std::cout << "Max steps reached in the episode." << std::endl;
     }
   }
   return isTerminalState;

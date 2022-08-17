@@ -10,12 +10,16 @@ public:
   DoomRLLogger(const std::string& saveDir);
 
   void logStep(double reward, double loss, double q);
-  void logEpisodeFinished();
+  void logEpisode();
 
   void record(size_t episodeNum, size_t stepNum, double epsilon);
 
 private:
+  bool hasStartedLogging;
+
+  std::string saveDir;
   std::string saveLogFilepath;
+  std::string csvFilepath;
 
   std::time_t recordTime;
 
@@ -36,9 +40,9 @@ private:
     this->currEpLoss = 0.0;
     this->currEpQ = 0.0;
     this->currEpLossLength = 0;
-
   };
 
+  void logPreamble() const;
 
 
 };
