@@ -29,27 +29,33 @@ public:
       assert(screenBuf != nullptr);
       // Preprocess the game's framebuffer (stored as a flat array of uint8_t)...
 
-      // Convert to a 3D tensor (height x width x channels)
-      this->screenTensor = torch::from_blob(
+      // Convert to a 3D tensor (height x width x channels) then 
+      auto tempTensor = torch::from_blob(
         screenBuf->data(), 
         {SCREEN_BUFFER_HEIGHT, SCREEN_BUFFER_WIDTH, NUM_CHANNELS}, 
         torch::TensorOptions().dtype(torch::kUInt8)
       );
 
-      // Reformat the tensor to be in the form that the interpolate function expects:
-      // Batch x Channel x Height x Width
-      this->screenTensor = this->screenTensor.permute({2,0,1}).unsqueeze(0); // shape is now [1,channels,height,width]
+      // Reformat the tensor to be in the form that the interpolate function expects: Batch x Channel x Height x Width
+      auto preppedTensor = tempTensor.permute({2,0,1}).toType(torch::kFloat).div_(255.0).unsqueeze_(0);
+      // sizes (shape) is now [1,channels,height,width], also converted channel values from [0,255] -> [0.0,1.0]
+      //std::cout << preppedTensor.sizes() << std::endl;
 
       // Downsample the screen buffer tensor - this will make a new tensor (so we don't need to clone anything)
       this->screenTensor = torch::nn::functional::interpolate(
-        this->screenTensor, 
+        preppedTensor, 
         torch::nn::functional::InterpolateFuncOptions()
         .size(std::vector<int64_t>({TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH}))
+        .align_corners(true)
+        //.scale_factor(std::vector<double>({
+        //  static_cast<double>(TENSOR_INPUT_HEIGHT)/static_cast<double>(SCREEN_BUFFER_HEIGHT),
+        //  static_cast<double>(TENSOR_INPUT_WIDTH)/static_cast<double>(SCREEN_BUFFER_WIDTH),
+        //})
         .mode(torch::kBilinear)
-      ); // shape is now [1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH]
-      
-      // Make sure to clone the data (we don't know what's going to happen to the original ImageBufferPtr after we leave)
-      //this->screenTensor = this->screenTensor.clone();
+      ); 
+      // this->screenTensor is now ready to be fed into the NN, with
+      // shape/sizes = [1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH]
+      assert((this->screenTensor.sizes() == torch::IntArrayRef({1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})));
     };
 
     torch::Tensor& tensor() { return this->screenTensor; }
@@ -77,21 +83,27 @@ public:
   };
   static constexpr size_t numActions = static_cast<size_t>(Action::DoomActionMoveForwardAndAttack) + 1;
 
-  DoomEnv(size_t frameSkip=4);
+  DoomEnv(size_t maxSteps=1e4, size_t frameSkip=4);
   ~DoomEnv();
 
-  using StatePtr = std::unique_ptr<DoomEnv::State>;
+  using StatePtr = std::shared_ptr<DoomEnv::State>;
   using StepInfo = std::tuple<StatePtr, double, bool>;
   StatePtr reset();
   StepInfo step(const Action& a);
+
+  size_t getStepsPerformed() const { return this->stepsPerformed; }
+  size_t getMaxSteps() const { return this->maxSteps; }
 
 private:
   std::unique_ptr<vizdoom::DoomGame> game;
   std::unordered_map<Action, std::vector<double>> actionMap;
   std::unordered_map<vizdoom::GameVariable, std::shared_ptr<DoomRewardVariable>> rewardVars;
+  StatePtr lastState;
+  size_t stepsPerformed;
 
   // Configuration Variables
   size_t frameSkip;
+  size_t maxSteps;
 
   bool isEpisodeFinished() const;
 
@@ -104,6 +116,7 @@ inline DoomEnv::~DoomEnv() { this->game->close(); }
 
 // Start a new episode of play/training
 inline DoomEnv::StatePtr DoomEnv::reset() {
+  this->stepsPerformed = 0;
   this->game->newEpisode();
   // (Re)initialize all our variables (used to track rewards)
   for (auto& [varType, varPtr] : this->rewardVars) { varPtr->reinit(*this->game); }
@@ -111,7 +124,8 @@ inline DoomEnv::StatePtr DoomEnv::reset() {
   // Grab the very first state of the game and return it
   auto gameState = this->game->getState();
   assert(gameState != nullptr);
-  return std::make_unique<DoomEnv::State>(gameState->screenBuffer);
+  this->lastState = std::make_shared<DoomEnv::State>(gameState->screenBuffer);
+  return this->lastState;
 }
 
 /**
@@ -119,6 +133,7 @@ inline DoomEnv::StatePtr DoomEnv::reset() {
  * @returns An std::tuple of the form <nextState:State, reward:double, epsiodeFinished:bool>
  */
 inline DoomEnv::StepInfo DoomEnv::step(const DoomEnv::Action& a) {
+  this->stepsPerformed++;
   auto reward = 0.0;
   auto gameActionVec = this->actionMap[a];
 
@@ -135,18 +150,25 @@ inline DoomEnv::StepInfo DoomEnv::step(const DoomEnv::Action& a) {
   //  assert(gameState != nullptr);
   //  stateBuffers.push_back(gameState->screenBuffer);
   // }
+  auto done = false;
   auto gameState = this->game->getState();
-  assert(gameState != nullptr);
-
-  for (auto& [varType, varPtr] : this->rewardVars) { 
-    reward += varPtr->updateAndCalculateReward(*this->game);
+  if (gameState != nullptr) {
+    for (auto& [varType, varPtr] : this->rewardVars) { 
+      reward += varPtr->updateAndCalculateReward(*this->game);
+    }
+    this->lastState = std::make_shared<DoomEnv::State>(gameState->screenBuffer);
+    done = this->isEpisodeFinished();
   }
+  else {
+    done = true;
+  }
+
   // If the map end is reached the agent gets a big fat reward
   if (this->game->isMapEnded()) { // NOTE: isMapEnded was added to the DoomGame class manually and ViZDoom was recompiled with it!
     reward += 100.0;
   }
 
-  return std::make_tuple(std::make_unique<DoomEnv::State>(gameState->screenBuffer), reward, this->isEpisodeFinished());
+  return std::make_tuple(this->lastState, reward, done);
 }
 
 

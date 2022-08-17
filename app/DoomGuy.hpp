@@ -13,7 +13,7 @@ class DoomGuyNet;
 
 class DoomGuy {
 public:
-  DoomGuy(const std::string& saveDir);
+  DoomGuy(const std::string& saveDir, size_t stepsExplore=1e3);
 
   // Given a state, choose an epsilon-greedy action
   DoomEnv::Action act(DoomEnv::StatePtr& state); 

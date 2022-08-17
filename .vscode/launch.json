@@ -5,19 +5,11 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "ViZDoom Debug",
+      "name": "Doom RL Debug",
       "type": "cppdbg",
       "request": "launch",
       "cwd": "${workspaceFolder}/build",
-      "program": "${workspaceFolder}/build/vizdoom_test",
-      "MIMode": "lldb"
-    },
-    {
-      "name": "Test Debug",
-      "type": "cppdbg",
-      "request": "launch",
-      "cwd": "${workspaceFolder}/build",
-      "program": "${workspaceFolder}/build/test",
+      "program": "${workspaceFolder}/build/doom_rl",
       "MIMode": "lldb"
     }
   ]

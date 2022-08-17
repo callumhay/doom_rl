@@ -1,10 +1,10 @@
 #include <assert.h>
 #include <cstdlib>
 #include <algorithm>
-#include <random>
 #include <iostream>
 #include <sstream>
 
+#include "RNG.hpp"
 #include "DoomGuy.hpp"
 #include "DoomGuyNet.hpp"
 
@@ -14,9 +14,9 @@ using Action = DoomEnv::Action;
 constexpr size_t DEFAULT_REPLAY_BATCH_SIZE = 32;
 constexpr size_t REPLAY_MEMORY_MAX_SIZE    = 10000;
 
-DoomGuy::DoomGuy(const std::string& saveDir) : 
+DoomGuy::DoomGuy(const std::string& saveDir, size_t stepsExplore) : 
 saveDir(saveDir), currStep(0), batchSize(DEFAULT_REPLAY_BATCH_SIZE), 
-stepsBetweenSaves(5e5), stepsBetweenSyncs(1e4), stepsExplore(1e4),
+stepsBetweenSaves(5e5), stepsBetweenSyncs(1e4), stepsExplore(stepsExplore),
 useCuda(torch::cuda::is_available()), gamma(0.9), lossFn(),
 net(std::make_shared<DoomGuyNet>(
     torch::tensor({static_cast<int>(State::NUM_CHANNELS), static_cast<int>(State::TENSOR_INPUT_HEIGHT), static_cast<int>(State::TENSOR_INPUT_WIDTH)}), DoomEnv::numActions
@@ -41,19 +41,19 @@ net(std::make_shared<DoomGuyNet>(
  * Given a state, choose an epsilon-greedy action and update value of step.
  */
 Action DoomGuy::act(DoomEnv::StatePtr& state) {
-  auto random = static_cast<double>(std::rand()) / static_cast<double>(RAND_MAX);
+  auto random = RNG::getInstance()->randZeroToOne();
 
   Action action;
   if (random < this->explorationRate) {
     // Explore
-    action = static_cast<Action>(std::rand() % DoomEnv::numActions);
+    action = static_cast<Action>(RNG::getInstance()->rand(0, DoomEnv::numActions-1));
   }
   else {
     // Exploit
     auto stateTensor = this->useCuda ? state->tensor().cuda() : state->tensor();
-    stateTensor.unsqueeze(0);
-    //auto actionOutTensor = this->net(stateTensor, DoomGuyNet::Model::Online);
-    //action = static_cast<DoomEnv::Action>(torch::argmax(actionOutTensor, 1).item());
+    assert((stateTensor.sizes() == torch::IntArrayRef({1, DoomEnv::State::NUM_CHANNELS, DoomEnv::State::TENSOR_INPUT_HEIGHT, DoomEnv::State::TENSOR_INPUT_WIDTH})));
+    auto actionTensor = this->net->forward(stateTensor, DoomGuyNet::Model::Online);
+    action = static_cast<DoomEnv::Action>(torch::argmax(actionTensor, 1).item<int>());
   }
 
   // Decrease the exporationRate
@@ -73,10 +73,12 @@ void DoomGuy::cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, Acti
     this->replayMemory.pop_back();
   }
 
+  // IMPORTANT: We need to squeeze the state vectors since they are built with an extra 'batch number' dimension
+  // This batch number will not be needed for recall/replay
   if (this->useCuda) {
     this->replayMemory.push_back({
-      state->tensor().cuda(), 
-      nextState->tensor().cuda(),
+      state->tensor().squeeze().cuda(), 
+      nextState->tensor().squeeze().cuda(),
       torch::tensor({static_cast<int>(action)}).cuda(), 
       torch::tensor({reward}).cuda(),
       torch::tensor({done}).cuda(),
@@ -84,8 +86,8 @@ void DoomGuy::cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, Acti
   }
   else {
     this->replayMemory.push_back({
-      state->tensor(), 
-      nextState->tensor(),
+      state->tensor().squeeze(), 
+      nextState->tensor().squeeze(),
       torch::tensor({static_cast<int>(action)}), 
       torch::tensor({reward}),
       torch::tensor({done}),
@@ -111,7 +113,9 @@ std::tuple<double, double> DoomGuy::learn() {
 
   // Get the Temporal Difference (TD) estimate and target
   auto tdEst = this->tdEstimate(stateBatch, actionBatch);
+  assert((tdEst.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
   auto tdTgt = this->tdTarget(rewardBatch, nextStateBatch, doneBatch);
+  assert((tdTgt.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
 
   // Backprogogate the loss through the Q-Online Network
   auto loss = this->updateQOnline(tdEst, tdTgt);
@@ -164,24 +168,55 @@ std::vector<DoomGuy::ReplayData> DoomGuy::randomSamples(size_t n) {
 torch::Tensor DoomGuy::tdEstimate(torch::Tensor stateBatch, torch::Tensor actionBatch) {
   using namespace torch::indexing;
 
+  assert((stateBatch.sizes() == torch::IntArrayRef({
+    DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::State::NUM_CHANNELS, 
+    DoomEnv::State::TENSOR_INPUT_HEIGHT, DoomEnv::State::TENSOR_INPUT_WIDTH
+  })));
+  assert((actionBatch.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+
   // Get the network output, a tensor of the form [batch_size, Q(s,a)]
   // Where Q(s,a) is the online network Q-Values for each action, with a dimension of DoomEnv::numActions
-  auto currentQ = this->net->forward(stateBatch, DoomGuyNet::Model::Online).index({Slice(), actionBatch});
-  return currentQ;
+  auto currentQ = this->net->forward(stateBatch, DoomGuyNet::Model::Online);
+  assert((currentQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::numActions})));
+
+  // We need to select the Q-values in currentQ for the given batch of actions i.e., index into each batch
+  // by the actions specified in actionBatch...
+  //currentQ[torch.arange(32),actionBatch.flatten()].unsqueeze(0).t()
+  auto indexedQ = currentQ.index({torch::arange(currentQ.size(0)), actionBatch.flatten()}).unsqueeze_(0).t_();
+  assert((indexedQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+
+  return indexedQ; // [DEFAULT_REPLAY_BATCH_SIZE, 1]
 }
 
 torch::Tensor DoomGuy::tdTarget(torch::Tensor rewardBatch, torch::Tensor nextStateBatch, torch::Tensor doneBatch) {
   using namespace torch::indexing;
+
+  assert((rewardBatch.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+  assert((nextStateBatch.sizes() == torch::IntArrayRef({
+    DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::State::NUM_CHANNELS, 
+    DoomEnv::State::TENSOR_INPUT_HEIGHT, DoomEnv::State::TENSOR_INPUT_WIDTH
+  })));
+  assert((doneBatch.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+
   torch::NoGradGuard no_grad;
 
   auto nextStateQ = this->net->forward(nextStateBatch, DoomGuyNet::Model::Online);
-  auto bestAction = torch::argmax(nextStateQ, 1);
-  auto nextQ = this->net->forward(nextStateBatch, DoomGuyNet::Model::Target).index({Slice(), bestAction});
+  assert((nextStateQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::numActions})));
 
-  return (rewardBatch + (1.0 - doneBatch.to(torch::kFloat)) * this->gamma * nextQ).to(torch::kFloat);
+  auto bestActionBatch = torch::argmax(nextStateQ, 1);
+  assert((bestActionBatch.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE})));
+
+  auto nextQ = this->net->forward(nextStateBatch, DoomGuyNet::Model::Target);
+  assert((nextQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::numActions})));
+
+  auto indexedNextQ = nextQ.index({torch::arange(nextQ.size(0)), bestActionBatch}).unsqueeze_(0).t_();
+  assert((indexedNextQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+
+  return (rewardBatch + (1.0 - doneBatch.to(torch::kFloat)) * this->gamma * indexedNextQ).to(torch::kFloat);
 }
 
 torch::Scalar DoomGuy::updateQOnline(torch::Tensor tdEstimate, torch::Tensor tdTarget) {
+  // NOTE: Both tdEstimate and tdTarget are tensors of size [DEFAULT_REPLAY_BATCH_SIZE, 1]
   auto loss = this->lossFn(tdEstimate, tdTarget);
   this->optimizer->zero_grad();
   loss.backward();

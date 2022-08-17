@@ -10,9 +10,9 @@ target_sources(vizdoom_test
 )
 ]]
 
-target_sources(torch_test
+target_sources(doom_rl
   PRIVATE
-    torch_test.cpp
+    doom_rl.cpp
     DoomEnv.hpp
     DoomEnv.cpp
     DoomGuy.hpp
@@ -21,4 +21,6 @@ target_sources(torch_test
     DoomGuyNet.cpp
     DoomRLLogger.hpp
     DoomRLLogger.cpp
+    RNG.hpp
+    RNG.cpp
 )

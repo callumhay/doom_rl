@@ -24,13 +24,13 @@ private:
   std::time_t recordTime;
 
   double currEpReward;
-  size_t currEpLength;
+  double currEpLength;
   double currEpLoss;
   double currEpQ;
   size_t currEpLossLength;
 
   std::vector<double> epRewards;
-  std::vector<size_t> epLengths;
+  std::vector<double> epLengths;
   std::vector<double> epAvgLosses;
   std::vector<double> epAvgQs;
 

@@ -29,7 +29,7 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 #add_executable(vizdoom_test "")
-add_executable(torch_test "")
+add_executable(doom_rl "")
 
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
@@ -43,5 +43,5 @@ add_subdirectory(app)
 #target_include_directories(vizdoom_test PRIVATE extern/ViZDoom/include ${ARMADILLO_INCLUDE_DIR} ${MLPACK_INCLUDE_DIRS})
 #target_link_libraries(vizdoom_test PRIVATE libvizdoom_static ${MLPACK_LIBRARIES})
 
-target_include_directories(torch_test PRIVATE extern/ViZDoom/include)
-target_link_libraries(torch_test PRIVATE "${TORCH_LIBRARIES}" libvizdoom_static) #TorchVision::TorchVision
+target_include_directories(doom_rl PRIVATE extern/ViZDoom/include)
+target_link_libraries(doom_rl PRIVATE "${TORCH_LIBRARIES}" libvizdoom_static) #TorchVision::TorchVision

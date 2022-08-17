@@ -4,7 +4,8 @@
 
 using namespace vizdoom;
 
-DoomEnv::DoomEnv(size_t frameSkip): game(std::make_unique<DoomGame>()), frameSkip(frameSkip) {
+DoomEnv::DoomEnv(size_t maxSteps, size_t frameSkip): 
+game(std::make_unique<DoomGame>()), lastState(nullptr), frameSkip(frameSkip), maxSteps(maxSteps), stepsPerformed(0) {
   // Setup the ViZDoom game environment...
   this->initGameOptions();
   this->initGameActions();
@@ -27,12 +28,12 @@ DoomEnv::DoomEnv(size_t frameSkip): game(std::make_unique<DoomGame>()), frameSki
 }
 
 bool DoomEnv::isEpisodeFinished() const {
-  auto gameState = this->game->getState();
   auto isTerminalState = (
-    gameState == nullptr || this->game->isEpisodeFinished() || 
-    this->game->isPlayerDead() || this->game->isMapEnded());
+    (this->maxSteps != 0 && this->stepsPerformed >= this->maxSteps) ||
+    this->game->getState() == nullptr || this->game->isEpisodeFinished() || 
+    this->game->isPlayerDead() || this->game->isMapEnded()
+  );
 
-  
   if (isTerminalState) {
     std::cout << "Episode finished: ";
     if (this->game->isMapEnded()) {

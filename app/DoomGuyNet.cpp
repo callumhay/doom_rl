@@ -17,14 +17,18 @@ torch::nn::Sequential DoomGuyNet::buildNetwork(size_t inputChannels, size_t outp
   constexpr int layer2OutChannels = 64;
   return torch::nn::Sequential(
     torch::nn::Conv2d(torch::nn::Conv2dOptions(inputChannels, layer0OutChannels, 8).stride(4)), // (inChannels, outChannels, kernelSize)
-    torch::nn::LeakyReLU(),  // [w,h,c] = [39,24,32]
-    torch::nn::Conv2d(torch::nn::Conv2dOptions(layer0OutChannels, layer1OutChannels, 4).stride(2)),
-    torch::nn::LeakyReLU(),  // -> [12,7,64]
+    torch::nn::LeakyReLU(), // [w,h,c] = [39,24,32]
+    torch::nn::Conv2d(torch::nn::Conv2dOptions(layer0OutChannels, layer1OutChannels, 5).stride(2)),
+    torch::nn::LeakyReLU(), // [18,10,64]
+    
+    //torch::nn::MaxPool2d(torch::nn::MaxPool2dOptions({2,2}).stride({2,2})), // [9,5,64]
+    //torch::nn::Conv2d(torch::nn::Conv2dOptions(layer1OutChannels, layer2OutChannels, 2).stride(1)), // [8,4,64]
+
     torch::nn::Conv2d(torch::nn::Conv2dOptions(layer1OutChannels, layer2OutChannels, 3).stride(1)),
-    torch::nn::LeakyReLU(), // -> [10,5,64]
-    torch::nn::Flatten(), // -> [3200]
-    torch::nn::Linear(3200, 512),
+    torch::nn::LeakyReLU(), // [16,8,64]
+    torch::nn::Flatten(), // -> [8192]
+    torch::nn::Linear(torch::nn::LinearOptions(8192, 1024)),
     torch::nn::ReLU(),
-    torch::nn::Linear(512, outputDim)
+    torch::nn::Linear(torch::nn::LinearOptions(1024, outputDim))
   );
 }
