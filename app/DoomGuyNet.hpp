@@ -14,10 +14,11 @@ public:
 
   DoomGuyNet(torch::Tensor inputDim, size_t outputDim);
 
+  // Synchronize the target with the current online network
   void syncTarget() {
     std::stringstream stream;
     torch::save(this->online, stream);
-    torch::load(this->target, stream);
+    torch::load(this->target, stream); // Load the online network into the target network
   };
 
   torch::Tensor forward(torch::Tensor input, Model model) {

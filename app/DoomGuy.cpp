@@ -16,7 +16,7 @@ constexpr size_t REPLAY_MEMORY_MAX_SIZE    = 10000;
 
 DoomGuy::DoomGuy(const std::string& saveDir, size_t stepsExplore) : 
 saveDir(saveDir), currStep(0), batchSize(DEFAULT_REPLAY_BATCH_SIZE), 
-stepsBetweenSaves(5e5), stepsBetweenSyncs(1e4), stepsExplore(stepsExplore),
+stepsBetweenSaves(1e5), stepsBetweenSyncs(1e4), stepsExplore(stepsExplore),
 useCuda(torch::cuda::is_available()), gamma(0.9), lossFn(),
 net(std::make_shared<DoomGuyNet>(
     torch::tensor({static_cast<int>(State::NUM_CHANNELS), static_cast<int>(State::TENSOR_INPUT_HEIGHT), static_cast<int>(State::TENSOR_INPUT_WIDTH)}), DoomEnv::numActions
@@ -97,10 +97,10 @@ void DoomGuy::cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, Acti
 
 std::tuple<double, double> DoomGuy::learn() {
   if (this->currStep % this->stepsBetweenSyncs == 0) {
-    this->net->syncTarget();
+    this->net->syncTarget(); // Current online network get loaded into the target network
   }
   if (this->currStep % this->stepsBetweenSaves == 0) {
-    this->save();
+    this->save(); // Save the agent network to disk
   }
   if (this->currStep < this->stepsExplore) {
     return std::make_tuple(-1.0,-1.0);

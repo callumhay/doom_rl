@@ -114,69 +114,53 @@ int main(int argc, char* argv[]) {
   auto guy = std::make_unique<DoomGuy>(checkPtDirPath, stepsExplore);
   auto env = std::make_unique<DoomEnv>(stepsPerEpMax);
 
-  std::cout << "Running " << numEpisodes << " episodes of DoomGuy..." << std::endl;
-  for (auto e = 0; e < numEpisodes; e++) {
-    const auto currEpNum = e+1;
-    
-    std::cout << "Starting episode #" << currEpNum << "..." << std::endl;
-    std::cout << "Maximum steps expected: " << stepsPerEpMax << std::endl;
-
-    // Time to play Doom!
-    auto state = env->reset(); // Reset the environment and get the initial state
-    while (true) {
-
-      auto action = guy->act(state); // Run DoomGuy on the current state
-
-      // Perform the action in the environment and observe the next state, 
-      // reward and whether we're finished the episode
-      auto [nextState, reward, done] = env->step(action);
-
-      // Remember the full step sequence for recall later on
-      guy->cache(state, nextState, action, reward, done);
-
-      // Learn - this may just exit with [-1,-1] if we're still exploring
-      auto [q, loss] = guy->learn();
+  try {
+    std::cout << "Running " << numEpisodes << " episodes of DoomGuy..." << std::endl;
+    for (auto e = 0; e < numEpisodes; e++) {
+      const auto currEpNum = e+1;
       
-      logger->logStep(reward, loss, q); // Log our results for the step
-      
-      if (env->getStepsPerformed() % 500 == 0) {
-        std::cout << "[Episode #" << currEpNum << "]: " << env->getStepsPerformed() << " steps performed so far..." << std::endl;
+      std::cout << "Starting episode #" << currEpNum << "..." << std::endl;
+      std::cout << "Maximum steps expected: " << stepsPerEpMax << std::endl;
+
+      // Time to play Doom!
+      auto state = env->reset(); // Reset the environment and get the initial state
+      while (true) {
+
+        auto action = guy->act(state); // Run DoomGuy on the current state
+
+        // Perform the action in the environment and observe the next state, 
+        // reward and whether we're finished the episode
+        auto [nextState, reward, done] = env->step(action);
+
+        // Remember the full step sequence for recall later on
+        guy->cache(state, nextState, action, reward, done);
+
+        // Learn - this may just exit with [-1,-1] if we're still exploring
+        auto [q, loss] = guy->learn();
+        
+        logger->logStep(reward, loss, q); // Log our results for the step
+        
+        if (env->getStepsPerformed() % 500 == 0) {
+          std::cout << "[Episode #" << currEpNum << "]: " << env->getStepsPerformed() << " steps performed so far..." << std::endl;
+        }
+
+        // Update to the next state and check to see if we're done the episode
+        if (done) {
+          std::cout << "Finished episode." << std::endl;
+          break;
+        }
+        state = std::move(nextState);
       }
 
-      // Update to the next state and check to see if we're done the episode
-      if (done) {
-        std::cout << "Finished episode." << std::endl;
-        break;
-      }
-      state = std::move(nextState);
+      // Perform episode and running average logging
+      logger->logEpisode();
+      //if (e % minNumEpisodes == 0) {
+      logger->record(currEpNum, guy->getExplorationRate(), guy->getCurrStep());
+      //}
     }
-
-    // Perform episode and running average logging
-    logger->logEpisode();
-    //if (e % minNumEpisodes == 0) {
-    logger->record(currEpNum, guy->getExplorationRate(), guy->getCurrStep());
-    //}
+  } catch (const std::exception& e) {
+    std::cerr << "Exception thrown: " << std::endl << e.what() << std::endl << "Terminating program." << std::endl;
   }
 
-
-  /*
-  std::vector<uint8_t> fb = {1,2,3,4, 5,6,7,8, 9,10,11,12, 13,14,15,16};
-  auto opts = torch::TensorOptions().dtype(torch::kUInt8);
-  auto fbTensor = torch::from_blob(fb.data(), {4,4}, opts).clone();
-  std::cout << fbTensor << std::endl;
-  // Grab the center 2x2 of fbTensor
-  using namespace torch::indexing;
-  auto fbCenter2x2 = fbTensor.index({Slice(1,3), Slice(1,3)});
-  std::cout << fbCenter2x2 << std::endl;
-
-  std::cout << fbTensor.permute({1,0}).unsqueeze(0) << std::endl;
-
-  torch::Tensor tensor = torch::rand({2, 3});
-  std::cout << tensor << std::endl;
-
-  auto oneValTensor = torch::tensor({1});
-  auto item = oneValTensor.item();
-  std::cout << typeid(item).name() << std::endl;
-  */
   return 0;
 }
