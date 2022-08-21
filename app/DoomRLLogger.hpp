@@ -5,46 +5,43 @@
 #include <string>
 #include <vector>
 
+class DoomRLCmdOpts;
+
 class DoomRLLogger {
 public:
-  DoomRLLogger(const std::string& saveDir);
+  DoomRLLogger(const std::string& logDir, const std::string& checkpointDir);
 
-  void logStep(double reward, double loss, double q);
-  void logEpisode();
-
-  void record(size_t episodeNum, size_t stepNum, double epsilon);
+  void logStartSession(const DoomRLCmdOpts& cmdOpts);
+  void logStep(double reward, double loss, double q,  double lr, double epsilon);
+  void logEpisode(size_t episodeNum, size_t stepNum);
 
 private:
   bool hasStartedLogging;
 
-  std::string saveDir;
-  std::string saveLogFilepath;
+  std::string logFilepath;
   std::string csvFilepath;
 
   std::time_t recordTime;
 
-  double currEpReward;
-  double currEpLength;
-  double currEpLoss;
-  double currEpQ;
+  size_t currEpLength;
+  double currEpAvgLearningRate;
+  double currEpAvgQ;
+  double currEpAvgLoss;
   size_t currEpLossLength;
-
-  std::vector<double> epRewards;
-  std::vector<double> epLengths;
-  std::vector<double> epAvgLosses;
-  std::vector<double> epAvgQs;
+  double currEpReward;
+  double currEpAvgEpsilon;
 
   void initEpisode() {
+    this->currEpAvgLearningRate = 0.0;
+    this->currEpAvgQ = 0.0;
+    this->currEpAvgLoss = 0.0;
+    this->currEpLossLength = 0;
     this->currEpReward = 0.0;
     this->currEpLength = 0;
-    this->currEpLoss = 0.0;
-    this->currEpQ = 0.0;
-    this->currEpLossLength = 0;
+    this->currEpAvgEpsilon = 0.0;
   };
 
   void logPreamble() const;
-
-
 };
 
 #endif // __DOOMRLLOGGER_HPP__

@@ -6,16 +6,17 @@ DoomGuyNet::DoomGuyNet(torch::Tensor inputDim, size_t outputDim) {
   this->online = this->register_module("online", this->buildNetwork(inChannels, outputDim));
 
   // Q-Target parameters are frozen
-  for (auto& p : this->target->parameters()) {
-    p.set_requires_grad(false);
-  }
+  for (auto& p : this->target->parameters()) { p.set_requires_grad(false); }
 }
 
 torch::nn::Sequential DoomGuyNet::buildNetwork(size_t inputChannels, size_t outputDim) {
   constexpr int layer0OutChannels = 32;
   constexpr int layer1OutChannels = 64;
   constexpr int layer2OutChannels = 64;
-  return torch::nn::Sequential(
+  auto model = torch::nn::Sequential(
+
+
+
     torch::nn::Conv2d(torch::nn::Conv2dOptions(inputChannels, layer0OutChannels, 8).stride(4)), // (inChannels, outChannels, kernelSize)
     torch::nn::LeakyReLU(), // [w,h,c] = [39,24,32]
     torch::nn::Conv2d(torch::nn::Conv2dOptions(layer0OutChannels, layer1OutChannels, 5).stride(2)),
@@ -31,4 +32,9 @@ torch::nn::Sequential DoomGuyNet::buildNetwork(size_t inputChannels, size_t outp
     torch::nn::ReLU(),
     torch::nn::Linear(torch::nn::LinearOptions(1024, outputDim))
   );
+
+  // Cast all the layers in the model to half-precision
+  //model->to(torch::kFloat16);
+
+  return model;
 }

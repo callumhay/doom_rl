@@ -80,10 +80,9 @@ void DoomEnv::initGameOptions() {
   this->game->setSectorsInfoEnabled(true);
 
   // Turns on the sound. (turned off by default)
-  this->game->setSoundEnabled(true);
-  //game->setAudioBufferSize(SR_44100); // Doesn't do anything?
-
-  this->game->setDeathPenalty(10);
+  //this->game->setSoundEnabled(true);
+  
+  this->game->setDeathPenalty(50);
   //this->game->setLivingReward(0.01);
 
   // Makes the window appear (turned on by default)
@@ -113,7 +112,7 @@ void DoomEnv::initGameActions() {
   std::vector<std::vector<double>> actions;
   auto actionIdx = 0;
   for (; actionIdx < numActions; actionIdx++) {
-    // Columns are the actions defined by addAvailableButton, in order - NOTE: you can use combination actions!
+    // Columns are the actions defined by addAvailableButton, in the order added
     std::vector<double> actionVec(numActions, 0);
     actionVec[actionIdx] = 1;
     this->actionMap.insert({static_cast<Action>(actionIdx), actionVec});
@@ -146,18 +145,21 @@ void DoomEnv::initGameVariables() {
   auto armorRewardFunc = [](auto oldArmor, auto newArmor) {
     return (newArmor > oldArmor ? 1.0 : 0.25) * (newArmor-oldArmor); // Smaller penalty for losing armor vs. health
   };
+  auto itemRewardFunc = [](auto oldItemCount, auto newItemCount) { return newItemCount > oldItemCount ? (newItemCount-oldItemCount) : 0; };
   auto secretsRewardFunc = [](auto oldNumSecrets, auto newNumSecrets) { return newNumSecrets > oldNumSecrets ? 10 : 0; };
   auto dmgRewardFunc = [](auto oldDmg, auto newDmg) { return newDmg > oldDmg ? 0.1*(newDmg-oldDmg) : 0; };
   auto killCountRewardFunc = [](auto oldKillCount, auto newKillCount) { return newKillCount > oldKillCount ? 10 : 0; };
-  auto ammoRewardFunc = [](auto oldAmmo, auto newAmmo) { return (newAmmo > oldAmmo ? 1.0 : 0.01) * (newAmmo-oldAmmo); };
+  auto ammoRewardFunc = [](auto oldAmmo, auto newAmmo) { return (newAmmo > oldAmmo ? 1.0 : 0.1) * (newAmmo-oldAmmo); };
 
   // Setup our variable-reward mapping
   this->rewardVars = { 
-    { HEALTH,      std::make_shared<DoomRewardVarInt<healthRewardFunc>>(HEALTH, "Player health")       },
-    { ARMOR,       std::make_shared<DoomRewardVarInt<armorRewardFunc>>(ARMOR, "Player armor")          },
-    { SECRETCOUNT, std::make_shared<DoomRewardVarInt<secretsRewardFunc>>(SECRETCOUNT, "Secrets found") },
-    { DAMAGECOUNT, std::make_shared<DoomRewardVarInt<dmgRewardFunc>>(DAMAGECOUNT, "Monster damage")    },
-    { KILLCOUNT,   std::make_shared<DoomRewardVarInt<killCountRewardFunc>>(KILLCOUNT, "Kill count")    },
-    { AMMO2,       std::make_shared<DoomRewardVarInt<ammoRewardFunc>>(AMMO2, "Pistol ammo count")      }
+    std::make_shared<DoomRewardVarInt<healthRewardFunc>>(HEALTH, "Player health"),
+    std::make_shared<DoomRewardVarInt<armorRewardFunc>>(ARMOR, "Player armor"),
+    std::make_shared<DoomRewardVarInt<itemRewardFunc>>(ITEMCOUNT, "Item count"),
+    std::make_shared<DoomRewardVarInt<secretsRewardFunc>>(SECRETCOUNT, "Secrets found"),
+    std::make_shared<DoomRewardVarInt<dmgRewardFunc>>(DAMAGECOUNT, "Monster/Env damage"),
+    std::make_shared<DoomRewardVarInt<killCountRewardFunc>>(KILLCOUNT, "Kill count"),
+    std::make_shared<DoomRewardVarInt<ammoRewardFunc>>(AMMO2, "Pistol ammo count"),
+    std::make_shared<DoomPosRewardVariable>(POSITION_X, POSITION_Y, POSITION_Z) 
   };
 }

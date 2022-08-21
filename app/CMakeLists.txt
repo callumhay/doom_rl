@@ -1,14 +1,4 @@
 # https://crascit.com/2016/01/31/enhanced-source-file-handling-with-target_sources/
-#[[
-target_sources(vizdoom_test
-  PRIVATE
-    vizdoom_test.cpp
-    DoomRewardVariable.hpp
-    DoomEnvironment.hpp
-    DoomEnvironment.cpp
-  #PUBLIC
-)
-]]
 
 target_sources(doom_rl
   PRIVATE
@@ -21,6 +11,10 @@ target_sources(doom_rl
     DoomGuyNet.cpp
     DoomRLLogger.hpp
     DoomRLLogger.cpp
+    DoomRLCmdOpts.hpp
+    DoomRLCmdOpts.cpp
     RNG.hpp
     RNG.cpp
+    CosAnnealLRScheduler.hpp
+    CosAnnealLRScheduler.cpp
 )

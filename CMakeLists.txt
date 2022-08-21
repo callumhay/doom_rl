@@ -11,6 +11,9 @@ set(CMAKE_CXX_STANDARD 20 CACHE STRING "The C++ standard to use")
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(CMAKE_GENERATOR "Ninja")
+message("generator is set to ${CMAKE_GENERATOR}")
+
 ### Require out-of-source builds
 file(TO_CMAKE_PATH "${PROJECT_BINARY_DIR}/CMakeLists.txt" LOC_PATH)
 if(EXISTS "${LOC_PATH}")
@@ -33,6 +36,12 @@ add_executable(doom_rl "")
 
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
+
+set(Boost_USE_STATIC_LIBS OFF) 
+set(Boost_USE_MULTITHREADED ON)  
+set(Boost_USE_STATIC_RUNTIME OFF) 
+find_package(Boost REQUIRED COMPONENTS program_options) 
+
 #message(STATUS "Torch libraries: ${TORCH_LIBRARIES}")
 #find_package(TorchVision REQUIRED)
 
@@ -43,5 +52,5 @@ add_subdirectory(app)
 #target_include_directories(vizdoom_test PRIVATE extern/ViZDoom/include ${ARMADILLO_INCLUDE_DIR} ${MLPACK_INCLUDE_DIRS})
 #target_link_libraries(vizdoom_test PRIVATE libvizdoom_static ${MLPACK_LIBRARIES})
 
-target_include_directories(doom_rl PRIVATE extern/ViZDoom/include)
-target_link_libraries(doom_rl PRIVATE "${TORCH_LIBRARIES}" libvizdoom_static) #TorchVision::TorchVision
+target_include_directories(doom_rl PRIVATE extern/ViZDoom/include ${Torch_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
+target_link_libraries(doom_rl PRIVATE ${TORCH_LIBRARIES} ${Boost_LIBRARIES} libvizdoom_static)

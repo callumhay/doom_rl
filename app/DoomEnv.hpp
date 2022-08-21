@@ -2,6 +2,7 @@
 #define __DOOMENV_HPP__
 
 #include <assert.h>
+#include <iostream>
 #include <memory>
 #include <tuple>
 #include <unordered_map>
@@ -42,17 +43,16 @@ public:
       //std::cout << preppedTensor.sizes() << std::endl;
 
       // Downsample the screen buffer tensor - this will make a new tensor (so we don't need to clone anything)
+      // NOTE: Only dtypes for Float32, Float64 are supported by interpolate!
       this->screenTensor = torch::nn::functional::interpolate(
         preppedTensor, 
         torch::nn::functional::InterpolateFuncOptions()
         .size(std::vector<int64_t>({TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH}))
         .align_corners(true)
-        //.scale_factor(std::vector<double>({
-        //  static_cast<double>(TENSOR_INPUT_HEIGHT)/static_cast<double>(SCREEN_BUFFER_HEIGHT),
-        //  static_cast<double>(TENSOR_INPUT_WIDTH)/static_cast<double>(SCREEN_BUFFER_WIDTH),
-        //})
         .mode(torch::kBilinear)
-      ); 
+      );
+      //std::cout << this->screenTensor << std::endl;
+
       // this->screenTensor is now ready to be fed into the NN, with
       // shape/sizes = [1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH]
       assert((this->screenTensor.sizes() == torch::IntArrayRef({1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})));
@@ -97,7 +97,7 @@ public:
 private:
   std::unique_ptr<vizdoom::DoomGame> game;
   std::unordered_map<Action, std::vector<double>> actionMap;
-  std::unordered_map<vizdoom::GameVariable, std::shared_ptr<DoomRewardVariable>> rewardVars;
+  std::vector<std::shared_ptr<DoomRewardVariable>> rewardVars;
   StatePtr lastState;
   size_t stepsPerformed;
 
@@ -119,7 +119,7 @@ inline DoomEnv::StatePtr DoomEnv::reset() {
   this->stepsPerformed = 0;
   this->game->newEpisode();
   // (Re)initialize all our variables (used to track rewards)
-  for (auto& [varType, varPtr] : this->rewardVars) { varPtr->reinit(*this->game); }
+  for (auto& varPtr : this->rewardVars) { varPtr->reinit(*this->game); }
 
   // Grab the very first state of the game and return it
   auto gameState = this->game->getState();
@@ -139,7 +139,17 @@ inline DoomEnv::StepInfo DoomEnv::step(const DoomEnv::Action& a) {
 
   // Calculate the current action and total state reward based on our reward variables
   // NOTE: You can make a "prolonged" action and skip frames by providing the 2nd arg to makeAction
-  reward += this->game->makeAction(gameActionVec, this->frameSkip); // This will advance the ViZDoom game state
+  try {
+    reward += this->game->makeAction(gameActionVec, this->frameSkip); // This will advance the ViZDoom game state
+    if (reward != 0.0) {
+      std::cout << "Reward granted from ViZDoom gym 'makeAction()' [Reward: " << reward << "]" << std::endl;
+    }
+  }
+  catch (...) {
+    // If the game window was closed we'll get an exception here, exit gracefully
+    std::cout << "Game window was closed. Terminating program." << std::endl;
+    exit(0);
+  }
 
   // TODO?
   // std::vector<ImageBufferPtr> stateBuffers;
@@ -150,22 +160,18 @@ inline DoomEnv::StepInfo DoomEnv::step(const DoomEnv::Action& a) {
   //  assert(gameState != nullptr);
   //  stateBuffers.push_back(gameState->screenBuffer);
   // }
-  auto done = false;
+  auto done = this->isEpisodeFinished();
   auto gameState = this->game->getState();
   if (gameState != nullptr) {
-    for (auto& [varType, varPtr] : this->rewardVars) { 
+    for (auto& varPtr : this->rewardVars) { 
       reward += varPtr->updateAndCalculateReward(*this->game);
     }
     this->lastState = std::make_shared<DoomEnv::State>(gameState->screenBuffer);
-    done = this->isEpisodeFinished();
   }
-  else {
-    done = true;
-  }
-
+  
   // If the map end is reached the agent gets a big fat reward
   if (this->game->isMapEnded()) { // NOTE: isMapEnded was added to the DoomGame class manually and ViZDoom was recompiled with it!
-    reward += 100.0;
+    reward += 1000.0;
   }
 
   return std::make_tuple(this->lastState, reward, done);
