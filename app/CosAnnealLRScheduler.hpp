@@ -2,8 +2,10 @@
 #define __COSANNEALLRSCHEDULER_HPP__
 
 #include <iostream>
-#include <numbers>
+#include <cmath>
 #include <torch/torch.h>
+
+constexpr double PI = 3.141592653589793238462643383279502884;
 
 /**
  * Cosine annealing learning rate scheduler with periodic restarts.
@@ -90,15 +92,15 @@ private:
   double calcLR() const { return this->calcLR(this->batchSinceRestart); };
   double calcLR(size_t batchNum) const {
     auto fractToRestart = static_cast<double>(batchNum) / static_cast<double>(this->batchesPerCycle());
-    auto lr = this->minLR + 0.5 * (this->maxLR - this->minLR) * (1.0 + std::cos(fractToRestart * std::numbers::pi));
+    auto lr = this->minLR + 0.5 * (this->maxLR - this->minLR) * (1.0 + std::cos(fractToRestart * PI));
     return lr;
   }
 
   double fractToRestartIncreasing() const {
-    return (std::acos(1.0 - 2.0*(this->currLR-this->minLR)/(this->maxLR-this->minLR)) + std::numbers::pi) / std::numbers::pi;
+    return (std::acos(1.0 - 2.0*(this->currLR-this->minLR)/(this->maxLR-this->minLR)) + PI) / PI;
   }
   double fractToRestartDecreasing() const {
-    return std::acos(2.0*(this->currLR-this->minLR)/(this->maxLR-this->minLR) - 1.0) / std::numbers::pi;
+    return std::acos(2.0*(this->currLR-this->minLR)/(this->maxLR-this->minLR) - 1.0) / PI;
   }
 
 };

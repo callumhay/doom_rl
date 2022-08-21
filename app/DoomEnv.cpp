@@ -52,7 +52,13 @@ bool DoomEnv::isEpisodeFinished() const {
 
 void DoomEnv::initGameOptions() {
   // Sets path to vizdoom engine executive which will be spawned as a separate process. Default is "./vizdoom".
-  this->game->setViZDoomPath("./bin/vizdoomd.app/Contents/MacOS/vizdoomd");
+  this->game->setViZDoomPath(
+    #ifdef __APPLE__
+    "./bin/vizdoomd.app/Contents/MacOS/vizdoomd"
+    #else
+    "./bin/vizdoomd"
+    #endif
+  );
   // Sets path to doom2 iwad resource file which contains the actual doom game.
   this->game->setDoomGamePath("./bin/doom.wad"); // "../../bin/doom2.wad");
   // Sets path to additional resources iwad file which is basically your scenario iwad.
@@ -141,25 +147,25 @@ void DoomEnv::initGameVariables() {
   this->game->addAvailableGameVariable(AMMO2);       // Amount of ammo for the pistol
 
   // Reward functions (how we calculate the reward when specific game variables change)
-  auto healthRewardFunc = [](auto oldHealth, auto newHealth) { return newHealth-oldHealth; };
-  auto armorRewardFunc = [](auto oldArmor, auto newArmor) {
+  auto healthRewardFunc = [](int oldHealth, int newHealth) { return newHealth-oldHealth; };
+  auto armorRewardFunc = [](int oldArmor, int newArmor) {
     return (newArmor > oldArmor ? 1.0 : 0.25) * (newArmor-oldArmor); // Smaller penalty for losing armor vs. health
   };
-  auto itemRewardFunc = [](auto oldItemCount, auto newItemCount) { return newItemCount > oldItemCount ? (newItemCount-oldItemCount) : 0; };
-  auto secretsRewardFunc = [](auto oldNumSecrets, auto newNumSecrets) { return newNumSecrets > oldNumSecrets ? 10 : 0; };
-  auto dmgRewardFunc = [](auto oldDmg, auto newDmg) { return newDmg > oldDmg ? 0.1*(newDmg-oldDmg) : 0; };
-  auto killCountRewardFunc = [](auto oldKillCount, auto newKillCount) { return newKillCount > oldKillCount ? 10 : 0; };
-  auto ammoRewardFunc = [](auto oldAmmo, auto newAmmo) { return (newAmmo > oldAmmo ? 1.0 : 0.1) * (newAmmo-oldAmmo); };
+  auto itemRewardFunc = [](int oldItemCount, int newItemCount) { return newItemCount > oldItemCount ? (newItemCount-oldItemCount) : 0; };
+  auto secretsRewardFunc = [](int oldNumSecrets, int newNumSecrets) { return newNumSecrets > oldNumSecrets ? 10 : 0; };
+  auto dmgRewardFunc = [](int oldDmg, int newDmg) { return newDmg > oldDmg ? 0.1*(newDmg-oldDmg) : 0; };
+  auto killCountRewardFunc = [](int oldKillCount, int newKillCount) { return newKillCount > oldKillCount ? 10 : 0; };
+  auto ammoRewardFunc = [](int oldAmmo, int newAmmo) { return (newAmmo > oldAmmo ? 1.0 : 0.1) * (newAmmo-oldAmmo); };
 
   // Setup our variable-reward mapping
-  this->rewardVars = { 
-    std::make_shared<DoomRewardVarInt<healthRewardFunc>>(HEALTH, "Player health"),
-    std::make_shared<DoomRewardVarInt<armorRewardFunc>>(ARMOR, "Player armor"),
-    std::make_shared<DoomRewardVarInt<itemRewardFunc>>(ITEMCOUNT, "Item count"),
-    std::make_shared<DoomRewardVarInt<secretsRewardFunc>>(SECRETCOUNT, "Secrets found"),
-    std::make_shared<DoomRewardVarInt<dmgRewardFunc>>(DAMAGECOUNT, "Monster/Env damage"),
-    std::make_shared<DoomRewardVarInt<killCountRewardFunc>>(KILLCOUNT, "Kill count"),
-    std::make_shared<DoomRewardVarInt<ammoRewardFunc>>(AMMO2, "Pistol ammo count"),
+  this->rewardVars = std::vector<std::shared_ptr<DoomRewardVariable>>({ 
+    std::make_shared<DoomRewardVarInt>(HEALTH, "Player health", healthRewardFunc),
+    std::make_shared<DoomRewardVarInt>(ARMOR, "Player armor", armorRewardFunc),
+    std::make_shared<DoomRewardVarInt>(ITEMCOUNT, "Item count", itemRewardFunc),
+    std::make_shared<DoomRewardVarInt>(SECRETCOUNT, "Secrets found", secretsRewardFunc),
+    std::make_shared<DoomRewardVarInt>(DAMAGECOUNT, "Monster/Env damage", dmgRewardFunc),
+    std::make_shared<DoomRewardVarInt>(KILLCOUNT, "Kill count", killCountRewardFunc),
+    std::make_shared<DoomRewardVarInt>(AMMO2, "Pistol ammo count", ammoRewardFunc),
     std::make_shared<DoomPosRewardVariable>(POSITION_X, POSITION_Y, POSITION_Z) 
-  };
+  });
 }

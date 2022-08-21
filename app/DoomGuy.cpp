@@ -82,6 +82,8 @@ void DoomGuy::cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, Acti
   // IMPORTANT: We need to squeeze the state vectors since they are built with an extra 'batch number' dimension
   // This batch number will not be needed for recall/replay
   auto doneNum = done ? 1.0 : 0.0;
+  // Save memory by only converting to cuda only once we retrieve samples from the replay later on
+  /*
   if (this->useCuda) {
     this->replayMemory.push_back({
       state->tensor().squeeze().cuda(), 
@@ -92,6 +94,7 @@ void DoomGuy::cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, Acti
     });
   }
   else {
+    */
     this->replayMemory.push_back({
       state->tensor().squeeze(), 
       nextState->tensor().squeeze(),
@@ -99,7 +102,7 @@ void DoomGuy::cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, Acti
       torch::tensor({reward}),
       torch::tensor({doneNum}),
     });
-  }
+  //}
 }
 
 std::tuple<double, double> DoomGuy::learn() {
@@ -149,6 +152,7 @@ void DoomGuy::save() {
 
 void DoomGuy::load(const std::string& checkpointFilepath) {
   torch::load(this->net, checkpointFilepath);
+  if (this->useCuda) { this->net->to(torch::kCUDA); }
 }
 
 /**
@@ -168,13 +172,13 @@ DoomGuy::ReplayData DoomGuy::recall() {
   for (auto i = 0; i < stackLists.size(); i++) {
     auto& stackList = stackLists[i];
     for (auto j = 0; j < stackList.size(); j++) {
-      stackList[j] = std::move(samples[j][i]);
+      stackList[j] = this->useCuda ? samples[j][i].cuda() : std::move(samples[j][i]);
     }
   }
 
   ReplayData result;
   for (auto i = 0; i < result.size(); i++) {
-    result[i] = torch::stack(stackLists[i]);
+    result[i] = this->useCuda ? torch::stack(stackLists[i]).cuda() : torch::stack(stackLists[i]);
   }
   return result;
 }

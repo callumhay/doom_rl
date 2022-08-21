@@ -28,10 +28,10 @@ public:
   torch::Tensor forward(torch::Tensor input, Model model) {
     // TODO: autocast is an unstable feature for half-precision, rewrite when a stable one exists!
     // See https://github.com/pytorch/pytorch/issues/44710 for updates.
-    at::autocast::set_enabled(true);
+    //at::autocast::set_enabled(true);
     auto result = model == Model::Online ? this->online->forward(input) : this->target->forward(input);
-    at::autocast::clear_cache();
-    at::autocast::set_enabled(false);
+    //at::autocast::clear_cache();
+    //at::autocast::set_enabled(false);
     return result;
   };
 

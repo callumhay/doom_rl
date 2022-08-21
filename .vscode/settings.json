@@ -110,6 +110,7 @@
     "*.ipp": "cpp",
     "*.opencl": "cpp",
     "__functional_base": "cpp",
-    "filesystem": "cpp"
+    "filesystem": "cpp",
+    "ranges": "cpp"
   }
 }

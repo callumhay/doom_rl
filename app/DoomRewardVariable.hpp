@@ -5,6 +5,7 @@
 #include "ViZDoomGame.h"
 #include <string>
 #include <memory>
+#include <functional>
 
 class DoomRewardVariable {
 public: 
@@ -18,11 +19,11 @@ protected:
   std::string varDescription;
 };
 
-template <typename T, auto rewardFunc>
+template <typename T>
 class DoomRewardVariableT : public DoomRewardVariable {
 public:
-  DoomRewardVariableT(vizdoom::GameVariable varType, const std::string& varDescription):
-    DoomRewardVariable(varDescription), varType(varType), currValue(0) {}
+  DoomRewardVariableT(vizdoom::GameVariable varType, const std::string& varDescription, std::function<T(T, T)> rewardFunc):
+    DoomRewardVariable(varDescription), varType(varType), currValue(0), getReward(rewardFunc) {}
 
   void reinit(vizdoom::DoomGame& game) override {
     this->currValue = static_cast<T>(game.getGameVariable(this->varType));
@@ -51,11 +52,10 @@ public:
 private:
   vizdoom::GameVariable varType;
   T currValue;
-  decltype(rewardFunc) getReward = rewardFunc;
+  std::function<double(T, T)> getReward;
 };
 
-template <auto rewardFunc>
-using DoomRewardVarInt = DoomRewardVariableT<int, rewardFunc>;
+using DoomRewardVarInt = DoomRewardVariableT<int>;
 
 /**
  * Reward for movement / exploration through the world based on the initial position
