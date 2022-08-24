@@ -5,6 +5,7 @@
 #include <iostream>
 #include <memory>
 #include <tuple>
+#include <array>
 #include <unordered_map>
 
 #include <torch/torch.h>
@@ -12,51 +13,27 @@
 #include "ViZDoom.h"
 #include "ViZDoomTypes.h"
 #include "DoomRewardVariable.hpp"
+#include "DoomGuyNet.hpp"
 
 class DoomEnv {
 public:
 
   class State {
   public:
-    static constexpr size_t NUM_CHANNELS = 3;   // RGB
+    static constexpr int NUM_CHANNELS = 3;   // RGB
 
-    static constexpr size_t SCREEN_BUFFER_WIDTH  = 320; // Original screen buffer width in pixels
-    static constexpr size_t SCREEN_BUFFER_HEIGHT = 200; // Original screen buffer height in pixels
+    static constexpr int SCREEN_BUFFER_WIDTH  = 320; // Original screen buffer width in pixels
+    static constexpr int SCREEN_BUFFER_HEIGHT = 200; // Original screen buffer height in pixels
 
-    static constexpr size_t TENSOR_INPUT_WIDTH  = 160; // 1/2 the original screen buffer size
-    static constexpr size_t TENSOR_INPUT_HEIGHT = 100;
+    static constexpr std::array<int,2> TENSOR_INPUT_HEIGHT_WIDTH() {
+      switch (DoomGuyNet::version) {
+        default:
+        case 0: return {100, 160};
+        case 1: return {SCREEN_BUFFER_HEIGHT, SCREEN_BUFFER_WIDTH};
+      }
+    }
 
-    State(vizdoom::ImageBufferPtr screenBuf) {
-      assert(screenBuf != nullptr);
-      // Preprocess the game's framebuffer (stored as a flat array of uint8_t)...
-
-      // Convert to a 3D tensor (height x width x channels) then 
-      auto tempTensor = torch::from_blob(
-        screenBuf->data(), 
-        {SCREEN_BUFFER_HEIGHT, SCREEN_BUFFER_WIDTH, NUM_CHANNELS}, 
-        torch::TensorOptions().dtype(torch::kUInt8)
-      );
-
-      // Reformat the tensor to be in the form that the interpolate function expects: Batch x Channel x Height x Width
-      auto preppedTensor = tempTensor.permute({2,0,1}).toType(torch::kFloat).div_(255.0).unsqueeze_(0);
-      // sizes (shape) is now [1,channels,height,width], also converted channel values from [0,255] -> [0.0,1.0]
-      //std::cout << preppedTensor.sizes() << std::endl;
-
-      // Downsample the screen buffer tensor - this will make a new tensor (so we don't need to clone anything)
-      // NOTE: Only dtypes for Float32, Float64 are supported by interpolate!
-      this->screenTensor = torch::nn::functional::interpolate(
-        preppedTensor, 
-        torch::nn::functional::InterpolateFuncOptions()
-        .size(std::vector<int64_t>({TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH}))
-        .align_corners(true)
-        .mode(torch::kBilinear)
-      );
-      //std::cout << this->screenTensor << std::endl;
-
-      // this->screenTensor is now ready to be fed into the NN, with
-      // shape/sizes = [1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH]
-      assert((this->screenTensor.sizes() == torch::IntArrayRef({1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})));
-    };
+    State(vizdoom::ImageBufferPtr screenBuf);
 
     torch::Tensor& tensor() { return this->screenTensor; }
 
@@ -83,7 +60,7 @@ public:
   };
   static constexpr size_t numActions = static_cast<size_t>(Action::DoomActionMoveForwardAndAttack) + 1;
 
-  DoomEnv(size_t maxSteps=1e4, size_t frameSkip=4);
+  DoomEnv(size_t maxSteps=1e4, size_t frameSkip=4, const std::string& mapName="E1M1");
   ~DoomEnv();
 
   using StatePtr = std::shared_ptr<DoomEnv::State>;
@@ -93,6 +70,12 @@ public:
 
   size_t getStepsPerformed() const { return this->stepsPerformed; }
   size_t getMaxSteps() const { return this->maxSteps; }
+
+  void setMap(const std::string& mapName) { this->doomMapToLoadNext = mapName; };
+  void setCycledMap();
+  void setRandomMap();
+
+  const std::string& getMapToLoadNext() const { return this->doomMapToLoadNext; }
 
 private:
   std::unique_ptr<vizdoom::DoomGame> game;
@@ -104,6 +87,7 @@ private:
   // Configuration Variables
   size_t frameSkip;
   size_t maxSteps;
+  std::string doomMapToLoadNext;
 
   bool isEpisodeFinished() const;
 
@@ -117,7 +101,12 @@ inline DoomEnv::~DoomEnv() { this->game->close(); }
 // Start a new episode of play/training
 inline DoomEnv::StatePtr DoomEnv::reset() {
   this->stepsPerformed = 0;
+
+  //this->game->close();
+  this->game->setDoomMap(this->doomMapToLoadNext);
   this->game->newEpisode();
+  //this->game->init();
+
   // (Re)initialize all our variables (used to track rewards)
   for (auto& varPtr : this->rewardVars) { varPtr->reinit(*this->game); }
 

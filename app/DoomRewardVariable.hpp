@@ -6,6 +6,7 @@
 #include <string>
 #include <memory>
 #include <functional>
+#include <cmath>
 
 class DoomRewardVariable {
 public: 
@@ -27,8 +28,8 @@ public:
 
   void reinit(vizdoom::DoomGame& game) override {
     this->currValue = static_cast<T>(game.getGameVariable(this->varType));
-    std::cout << "Initial " << std::left << std::setw(20) << (this->varDescription+":")  
-              << std::setw(5) << this->currValue << std::endl;
+    //std::cout << "Initial " << std::left << std::setw(25) << (this->varDescription+":")  
+    //          << std::setw(5) << this->currValue << std::endl;
   }
 
   double updateAndCalculateReward(vizdoom::DoomGame& game) override {
@@ -73,9 +74,9 @@ public:
     this->initX = static_cast<double>(game.getGameVariable(this->varPosX));
     this->initY = static_cast<double>(game.getGameVariable(this->varPosY));
     this->initZ = static_cast<double>(game.getGameVariable(this->varPosZ));
-    std::cout << "Initial " << std::left << std::setw(20) << (this->varDescription+":")  
-              << "(" << this->initX << ", " << this->initY << ", " << this->initZ << ")"
-              << std::endl;
+    //std::cout << "Initial " << std::left << std::setw(20) << (this->varDescription+":")  
+    //          << "(" << this->initX << ", " << this->initY << ", " << this->initZ << ")"
+    //          << std::endl;
   }
 
   double updateAndCalculateReward(vizdoom::DoomGame& game) override {
@@ -90,7 +91,7 @@ public:
 
     // If the distance travelled is larger than the current largest distance by the rewardRadiusDiff then give a reward
     if (rDiff >= rewardRadiusDiff) {
-      reward += 0.01*dist;
+      reward += 0.1*std::floor(dist/rewardRadiusDiff);
       std::cout << std::fixed << std::setprecision(1)
                 << this->varDescription << " changed - distance increased by " << rDiff 
                 << " (total distance from episode start: " << dist << ")"

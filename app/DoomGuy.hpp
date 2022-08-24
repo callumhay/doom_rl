@@ -27,12 +27,14 @@ public:
   // Returns <mean_q, loss>
   std::tuple<double, double> learn();
 
+  void episodeEnded(size_t episodeNum);
+
   auto getCurrStep() const { return this->currStep; }
   auto getEpsilon() const { return this->epsilon; }
   auto getLearningRate() const { return static_cast<torch::optim::AdamOptions&>(this->optimizer->param_groups()[0].options()).lr(); }
 
   void save();
-  void load(const std::string& checkpointFilepath);
+  void load(const std::string& chkptFilepath);
 
 private:
   std::string saveDir;
@@ -61,6 +63,8 @@ private:
   // [state, nextState, action, reward, done]
   using ReplayData = std::array<torch::Tensor, 5>;
   std::vector<ReplayData> replayMemory;
+
+  void rebuildOptimizer(double lr);
 
   ReplayData recall();
   std::vector<ReplayData> randomSamples(size_t n);

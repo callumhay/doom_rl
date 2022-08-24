@@ -9,19 +9,23 @@
 
 class DoomGuyNet : public torch::nn::Module {
 public:
+  static constexpr size_t version = 1;
+
   enum class Model {
     Online,
     Target
   };
 
-  DoomGuyNet(torch::Tensor inputDim, size_t outputDim);
+  DoomGuyNet(size_t inputChannels, size_t outputDim, size_t version=DoomGuyNet::version);
 
   // Synchronize the target with the current online network
   void syncTarget() {
     std::stringstream stream;
     torch::save(this->online, stream);
     torch::load(this->target, stream); // Load the online network into the target network
-    // Q-Target parameters are frozen
+    this->freezeTarget();
+  };
+  void freezeTarget() { 
     for (auto& p : this->target->parameters()) { p.set_requires_grad(false); }
   };
 
@@ -35,12 +39,18 @@ public:
     return result;
   };
 
+  //std::shared_ptr<Module> clone(const optional<Device>& device = nullopt) const override;
+  void pretty_print(std::ostream& stream) const override;
+
 private:
+  size_t currVersion;
+  size_t inputChannels, outputDim;
   torch::nn::Sequential online;
   torch::nn::Sequential target;
   
-  torch::nn::Sequential buildNetwork(size_t inputChannels, size_t outputDim);
-
+  void buildNetworks(size_t version);
+  static torch::nn::Sequential buildV0Network(size_t inputChannels, size_t outputDim);
+  static torch::nn::Sequential buildV1Network(size_t inputChannels, size_t outputDim);
 };
 
 

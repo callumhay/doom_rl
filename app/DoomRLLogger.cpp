@@ -13,7 +13,7 @@
 namespace fs = std::filesystem;
 
 constexpr size_t MAX_RUNNING_AVG_SIZE = 100;
-constexpr std::array<size_t, 10> logWidths = {8, 8, 17, 21, 15, 17, 15, 15, 15, 30};
+constexpr std::array<size_t, 12> logWidths = {8, 8, 6, 10, 15, 12, 14, 16, 10, 10, 15, 27};
 
 template<typename T, std::size_t N>
 constexpr T arraySum(const std::array<T,N>& array) {
@@ -27,12 +27,14 @@ void headerToSStream(std::stringstream& ss, const std::string separator="") {
   int i = 0;
   ss << std::setw(logWidths[i++]) << "Episode" << separator;
   ss << std::setw(logWidths[i++]) << "Step" << separator;
-  ss << std::setw(logWidths[i++]) << "Mean Epsilon" << separator; 
-  ss << std::setw(logWidths[i++]) << "Mean Learning Rate" << separator;
+  ss << std::setw(logWidths[i++]) << "Map" << separator;
+  ss << std::setw(logWidths[i++]) << "Epsilon" << separator; 
+  ss << std::setw(logWidths[i++]) << "Learning Rate" << separator;
+  ss << std::setw(logWidths[i++]) << "Ep Reward" << separator;
   ss << std::setw(logWidths[i++]) << "Total Reward" << separator;
   ss << std::setw(logWidths[i++]) << "Length (Steps)" << separator;
-  ss << std::setw(logWidths[i++]) << "Mean Loss" << separator;
-  ss << std::setw(logWidths[i++]) << "Mean Q-Value" << separator;
+  ss << std::setw(logWidths[i++]) << "Loss" << separator;
+  ss << std::setw(logWidths[i++]) << "Q-Value" << separator;
   ss << std::setw(logWidths[i++]) << "Time Delta" << separator;
   ss << std::setw(logWidths[i++]) << "Time" << std::endl;
 }
@@ -44,7 +46,7 @@ std::string toTimeStr(std::time_t t) {
 
 DoomRLLogger::DoomRLLogger(const std::string& logDir, const std::string& checkpointDir): 
 logFilepath(logDir + "/doom_rl_log.txt"), 
-recordTime(std::time(nullptr)), hasStartedLogging(false) {
+recordTime(std::time(nullptr)), hasStartedLogging(false), cumulativeReward(0) {
 
   fs::create_directories(logDir);
   fs::create_directories(checkpointDir);
@@ -86,10 +88,11 @@ void DoomRLLogger::logStep(double reward, double loss, double q, double lr, doub
   }
 
   this->currEpReward += reward;
+  this->cumulativeReward += reward;
   this->currEpLength++; // Make sure this is incremented AFTER calculating cumulative averages (e.g., learning rate)
 }
 
-void DoomRLLogger::logEpisode(size_t episodeNum, size_t stepNum) {
+void DoomRLLogger::logEpisode(size_t episodeNum, size_t stepNum, const std::string& mapName) {
   auto lastRecordTime = this->recordTime;
   this->recordTime = std::time(nullptr);
   auto timeSinceLastRecord = this->recordTime-lastRecordTime;
@@ -99,9 +102,11 @@ void DoomRLLogger::logEpisode(size_t episodeNum, size_t stepNum) {
     int i = 0;
     ss << std::fixed << std::setw(logWidths[i++]) << episodeNum << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << stepNum << separator;
+    ss << std::fixed << std::setw(logWidths[i++]) << mapName << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(4) << this->currEpAvgEpsilon << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(5) << this->currEpAvgLearningRate << separator;
-    ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(3) << this->currEpReward << separator;
+    ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(2) << this->currEpReward << separator;
+    ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(2) << this->cumulativeReward << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(0) << static_cast<size_t>(this->currEpLength) << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(5) << this->currEpAvgLoss << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(5) << this->currEpAvgQ << separator;

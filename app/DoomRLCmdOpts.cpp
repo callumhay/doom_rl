@@ -15,11 +15,12 @@ constexpr char cmdEpsilon[]       = "epsilon";
 constexpr char cmdEpsilonDecay[]  = "epsilon_decay";
 constexpr char cmdLearningRate[]  = "lr";
 constexpr char cmdLoadCkpt[]      = "checkpoint";
+constexpr char cmdMap[]           = "map";
 
-constexpr size_t stepsPerEpMaxDefault = 1e3;
+constexpr size_t stepsPerEpMaxDefault = 1e5;
 constexpr size_t episodesDefault      = 1e5;
-constexpr size_t stepsExploreDefault  = 500;
-constexpr size_t stepsSaveDefault     = 1e5;
+constexpr size_t stepsExploreDefault  = 1e4;
+constexpr size_t stepsSaveDefault     = 5e5;
 constexpr size_t stepsSyncDefault     = 1e4;
 constexpr double epislonDefault       = 1.0;
 constexpr double epsilonDecayDefault  = 0.99999975;
@@ -37,6 +38,7 @@ DoomRLCmdOpts::DoomRLCmdOpts(int argc, char* argv[]): desc("Allowed options") {
     (cmdEpsilonDecay,  po::value<double>(&this->epsilonDecay)->default_value(epsilonDecayDefault),   "Epsilon decay multiplier per step (multiplies the epsilon value at each step, decaying it over the course of training.")
     (cmdLearningRate,  po::value<double>(&this->learningRate)->default_value(learningRateDefault),   "Initial learning rate for gradient descent / optimization of the model network.")
     (cmdLoadCkpt,      po::value<std::string>(&this->checkpointFilepath)->default_value(""),         "Filepath for loading a checkpoint model file for the Q-networks.")
+    (cmdMap,           po::value<std::string>(&this->doomMap)->default_value("E1M1"),                "Doom map to train in, to cycle through maps use 'cycle', to choose random maps use 'random'.")
   ;
   po::store(po::parse_command_line(argc, argv, desc), this->vm);
   po::notify(this->vm);
@@ -56,6 +58,8 @@ void DoomRLCmdOpts::printOpts(std::ostream& stream) const {
     logVarInfo("Starting epsilon set to", this->startEpsilon);
     logVarInfo("Starting epsilon decay multiplier set to", this->epsilonDecay);
     logVarInfo("Starting learning rate set to", this->learningRate);
+    logVarInfo("Checkpoint file set to", this->checkpointFilepath);
+    logVarInfo("Doom map set to", this->doomMap);
 }
 
 void DoomRLCmdOpts::checkOpts() {
@@ -66,14 +70,14 @@ void DoomRLCmdOpts::checkOpts() {
 
   this->cmdVarCheck<size_t>(cmdEpisodes, this->numEpisodes, episodesDefault, "number of episodes", 1, std::numeric_limits<size_t>::max());
   this->cmdVarCheck<size_t>(cmdStepsPerEpMax, this->stepsPerEpMax, stepsPerEpMaxDefault, "steps per episode", 500, std::numeric_limits<size_t>::max());
-  this->cmdVarCheck<size_t>(cmdStepsExplore, this->stepsExplore, stepsExploreDefault, "exploration steps", 32, 500);
-  this->cmdVarCheck<size_t>(cmdStepsSave, this->stepsSave, stepsSaveDefault, "save steps (steps between checkpoints)", this->stepsPerEpMax, this->stepsPerEpMax*std::ceil(this->numEpisodes/10));
+  this->cmdVarCheck<size_t>(cmdStepsExplore, this->stepsExplore, stepsExploreDefault, "exploration steps", 32, std::numeric_limits<size_t>::max());
+  this->cmdVarCheck<size_t>(cmdStepsSave, this->stepsSave, stepsSaveDefault, "save steps (steps between checkpoints)", 1000, std::numeric_limits<size_t>::max());
   this->cmdVarCheck<size_t>(cmdStepsSync, this->stepsSync, stepsSyncDefault, "steps between synchronization between Q-target and Q-online networks", 1e2, 1e4);
   this->cmdVarCheck<double>(cmdEpsilon, this->startEpsilon, epislonDefault, "starting epsilon", 0.0, 1.0);
   this->cmdVarCheck<double>(cmdEpsilonDecay, this->epsilonDecay, epsilonDecayDefault, "epsilon decay multiplier", 0, 1, false, false);
   this->cmdVarCheck<double>(cmdLearningRate, this->learningRate, learningRateDefault, "learning rate", 0, 1, true, false);
 
-  if (this->vm.count(cmdLoadCkpt)) {
+  if (this->vm.count(cmdLoadCkpt) && !this->checkpointFilepath.empty()) {
     // Check if the file exists...
     if (!std::filesystem::exists(this->checkpointFilepath)) {
       std::cout << "Invalid checkpoint, file specified at '" << this->checkpointFilepath << "' does not exist." << std::endl;
@@ -86,7 +90,7 @@ template <typename T>
 void DoomRLCmdOpts::cmdVarCheck(const char* cmd, T& var, T defaultVal, const std::string& desc, T min, T max, bool minInc, bool maxInc) {
   if ((minInc && var < min || !minInc && var <= min || maxInc && var > max || !maxInc && var >= max)) {
     std::cout << "Invalid " << desc << " specified, must be in " << (minInc ? "[" : "(") << min << ", " << max << (maxInc ? "]" : ")") << "." << std::endl;
-    std::cout << "Defaulting to " << defaultVal << desc << "." << std::endl;
+    std::cout << "Defaulting to " << defaultVal << " " << desc << "." << std::endl;
     var = defaultVal;
   }
 }

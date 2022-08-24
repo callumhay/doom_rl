@@ -6,6 +6,9 @@
 
 class DoomRLCmdOpts {
 public:
+  static constexpr char doomMapRandom[] = "random";
+  static constexpr char doomMapCycle[] = "cycle";
+
   size_t numEpisodes;
   size_t stepsPerEpMax;
   size_t stepsExplore;
@@ -15,6 +18,7 @@ public:
   double epsilonDecay;
   double learningRate;
   std::string checkpointFilepath;
+  std::string doomMap;
 
   DoomRLCmdOpts(int argc, char* argv[]);
   void printOpts(std::ostream& stream) const;

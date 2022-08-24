@@ -5,11 +5,30 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Attach to DoomRL",
+      "type": "cppdbg",
+      "request": "attach",
+      "program": "${workspaceFolder}/build/doom_rl",
+      "MIMode": "gdb",
+      "setupCommands": [
+          {
+              "description": "Enable pretty-printing for gdb",
+              "text": "-enable-pretty-printing",
+              "ignoreFailures": true
+          },
+          {
+              "description":  "Set Disassembly Flavor to Intel",
+              "text": "-gdb-set disassembly-flavor intel",
+              "ignoreFailures": true
+          }
+      ]
+    },
+    {
       "name": "DoomRL Debug",
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/build/doom_rl",
-      "args": [],
+      "args": ["--map", "E1M2", "--epsilon", "0.5", "--save_steps", "50000", "--sync_steps", "10000", "--checkpoint", "./checkpoints/2022-08-23T18-46-08/doomguy_net_v1_save_1.chkpt"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/build",
       "environment": [],

@@ -14,20 +14,21 @@ using namespace torch::optim;
   multFactor: Scale epochs_to_restart after each full cycle completion.
 */
 CosAnnealLRScheduler::CosAnnealLRScheduler(
-  Optimizer& optimizer, size_t stepsPerEpoch, 
+  Optimizer& optimizer, size_t expectedStepsPerEpoch, 
   double minLR, double maxLR, double lrDecay, 
   size_t cycleLength, double multFactor
 ):
-LRScheduler(optimizer), stepsPerEpoch(stepsPerEpoch), minLR(minLR), maxLR(maxLR),
-lrDecay(lrDecay), cycleLength(cycleLength), multFactor(multFactor),
-batchSinceRestart(0), nextRestart(cycleLength), lossStepCount(0), avgdLossValue(0) {
+LRScheduler(optimizer), avgBatchesPerEpoch(static_cast<int64_t>(expectedStepsPerEpoch)), batchesInLastEpoch(0),
+minLR(minLR), maxLR(maxLR), lrDecay(lrDecay), cycleLength(cycleLength), multFactor(multFactor),
+batchSinceRestart(0), nextRestart(cycleLength), lossStepCount(0), dLossTotalInEpoch(0), avgLoss(0) {
+  assert(this->avgBatchesPerEpoch > 0);
   auto lrs = get_current_lrs();
   this->currLR = lrs[0];
 
   // Calculate where we are in the cycle based on the initial LR, this is based on the calcLR() method,
-  // but rearranged to calculate the batchSinceRestart so that our learning rate is increasing to start
-  auto ftrIncreasing = this->fractToRestartIncreasing();
-  this->batchSinceRestart = std::floor<size_t>(this->batchesPerCycle() * ftrIncreasing);
+  // but rearranged to calculate the batchSinceRestart so that our learning rate is decreasing to start
+  auto ftr = this->fractToRestartDecreasing();
+  this->batchSinceRestart = std::floor<size_t>(this->batchesPerCycle() * ftr);
 }
 
 std::vector<double> CosAnnealLRScheduler::get_lrs() {

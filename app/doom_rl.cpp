@@ -37,7 +37,7 @@ int main(int argc, char* argv[]) {
     cmdOpts->stepsExplore, cmdOpts->stepsSave, cmdOpts->stepsSync,
     cmdOpts->startEpsilon, cmdOpts->epsilonDecay, cmdOpts->learningRate
   );
-  auto env = std::make_unique<DoomEnv>(cmdOpts->stepsPerEpMax);
+  auto env = std::make_unique<DoomEnv>(cmdOpts->stepsPerEpMax, 4);
 
   // If a checkpoint file was given, load it
   if (!cmdOpts->checkpointFilepath.empty()) {
@@ -50,11 +50,26 @@ int main(int argc, char* argv[]) {
   std::cout << "Running " << cmdOpts->numEpisodes << " episodes of DoomGuy..." << std::endl;
   for (auto e = 0; e < cmdOpts->numEpisodes; e++) {
     const auto currEpNum = e+1;
+
+    auto updateEnvMap = [&env, &cmdOpts, e]() {
+      if (cmdOpts->doomMap.compare(DoomRLCmdOpts::doomMapCycle) == 0) {
+        if (e != 0) { env->setCycledMap(); }
+      }
+      else if (cmdOpts->doomMap.compare(DoomRLCmdOpts::doomMapRandom) == 0) {
+        env->setRandomMap();
+      }
+      else {
+        env->setMap(cmdOpts->doomMap);
+      }
+    };
     
     std::cout << "Starting episode #" << currEpNum << "..." << std::endl;
 
     // Time to play Doom!
-    auto state = env->reset(); // Reset the environment and get the initial state
+    // Set the map, reset the environment and get the initial state
+    updateEnvMap();
+    auto state = env->reset();
+
     while (true) {
 
       auto action = guy->act(state); // Run DoomGuy on the current state
@@ -85,7 +100,8 @@ int main(int argc, char* argv[]) {
       state = std::move(nextState);
     }
 
-    logger->logEpisode(currEpNum, guy->getCurrStep());
+    logger->logEpisode(currEpNum, guy->getCurrStep(), env->getMapToLoadNext());
+    guy->episodeEnded(currEpNum);
   }
 
   return 0;

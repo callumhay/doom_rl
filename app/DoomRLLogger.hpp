@@ -13,7 +13,7 @@ public:
 
   void logStartSession(const DoomRLCmdOpts& cmdOpts);
   void logStep(double reward, double loss, double q,  double lr, double epsilon);
-  void logEpisode(size_t episodeNum, size_t stepNum);
+  void logEpisode(size_t episodeNum, size_t stepNum, const std::string& mapName);
 
 private:
   bool hasStartedLogging;
@@ -30,6 +30,8 @@ private:
   size_t currEpLossLength;
   double currEpReward;
   double currEpAvgEpsilon;
+
+  double cumulativeReward;
 
   void initEpisode() {
     this->currEpAvgLearningRate = 0.0;

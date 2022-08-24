@@ -1,0 +1,17 @@
+name: doom_rl_viewer
+channels:
+  - defaults
+dependencies:
+  - torchvision
+  - matplotlib
+  - mkl-include
+  - torchaudio
+  - cudatoolkit=11.6
+  - future
+  - six
+  - requests
+  - typing_extensions
+  - cffi
+  - pytorch
+  - python
+prefix: /mnt/dev/anaconda3/envs/doom_rl_viewer
