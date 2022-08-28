@@ -6,71 +6,79 @@
 #include <filesystem>
 #include <regex>
 
+#include "debug_doom_rl.hpp"
 #include "RNG.hpp"
 #include "DoomGuy.hpp"
-#include "DoomGuyNet.hpp"
+#include "ReplayMemory.hpp"
+
 
 namespace fs = std::filesystem;
 
 using State  = DoomEnv::State;
 using Action = DoomEnv::Action;
 
-// https://acsweb.ucsd.edu/~wfedus/pdf/replay.pdf
-constexpr size_t DEFAULT_REPLAY_BATCH_SIZE = 32;
-constexpr size_t REPLAY_MEMORY_MAX_SIZE    = 72500; // If this is too big we WILL run out of memory 
-                                                    // (~70k is the max for about 67GB of available system memory)
-
 DoomGuy::DoomGuy(
   const std::string& saveDir, size_t stepsPerEpisode, 
   size_t stepsExplore, size_t stepsBetweenSaves, size_t stepsBetweenSyncs, 
-  double startEpsilon, double epsilonDecay, double learningRate
+  double startEpsilon, double epsilonMin, double epsilonDecay, double learningRate
 ) : 
-saveDir(saveDir), saveNumber(0), currStep(0), batchSize(DEFAULT_REPLAY_BATCH_SIZE), stepsPerEpisode(stepsPerEpisode),
+saveDir(saveDir), saveNumber(0), currStep(0), 
+stepsPerEpisode(stepsPerEpisode), stepsBetweenLearning(4),
 stepsBetweenSaves(stepsBetweenSaves), stepsBetweenSyncs(stepsBetweenSyncs), stepsExplore(stepsExplore),
-epsilon(startEpsilon), epsilonDecayMultiplier(epsilonDecay), epsilonMin(0.1), // TODO: Put into an options object
-useCuda(torch::cuda::is_available()), gamma(0.95), optimizer(nullptr), lrScheduler(nullptr),
-net(std::make_shared<DoomGuyNet>(State::NUM_CHANNELS, DoomEnv::numActions)) {
+epsilon(startEpsilon), epsilonDecayMultiplier(epsilonDecay), epsilonMin(epsilonMin),
+useCuda(torch::cuda::is_available()), gamma(0.95), lrScheduler(nullptr), 
+net(State::NUM_CHANNELS, DoomEnv::getNumActions(DoomGuyNetImpl::version), DoomGuyNetImpl::version),
+optimizer(net->parameters(), torch::optim::AdamOptions(learningRate)) {
 
-  assert(this->stepsExplore >= DEFAULT_REPLAY_BATCH_SIZE);
+  //for (auto params : this->net->parameters()) {
+    //std::cout << params << std::endl;
+  //}
 
-  this->replayMemory.reserve(REPLAY_MEMORY_MAX_SIZE);
-  if (this->useCuda) { this->net->to(torch::kCUDA); }
-  this->rebuildOptimizer(learningRate);
-}
-
-void DoomGuy::rebuildOptimizer(double lr) {
-  this->optimizer = std::make_unique<torch::optim::Adam>(this->net->parameters(), torch::optim::AdamOptions(lr).amsgrad(true));
-
-  // NOTE: an epoch is one complete pass through the training data... in RL this is pretty meaningless,
-  // to start so that it doesn't overcompensate at the start
-  auto expStepsPerEpoch = this->stepsPerEpisode/100;
-  if (this->lrScheduler != nullptr) {
-    expStepsPerEpoch = this->lrScheduler->getAvgBatchesPerEpoch();
+  if (this->useCuda) { 
+    this->net->to(torch::kCUDA);
+    this->lossFn->to(torch::kCUDA);
   }
-  this->lrScheduler = std::make_unique<CosAnnealLRScheduler>(*this->optimizer, expStepsPerEpoch);
+  this->rebuildScheduler();
+  //this->lrScheduler->setEnabled(false);
 }
 
 /**
  * Given a state, choose an epsilon-greedy action and update value of step.
  */
-Action DoomGuy::act(DoomEnv::StatePtr& state) {
-  auto random = RNG::getInstance()->randZeroToOne();
+Action DoomGuy::act(torch::Tensor state, std::unique_ptr<DoomEnv>& env) {
+  #ifdef DEBUG
+  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = DoomEnv::State::TENSOR_INPUT_HEIGHT_WIDTH(this->net->getCurrVersion());
+  assert((state.sizes() == torch::IntArrayRef({DoomEnv::State::NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})));
+  #endif
 
-  Action action;
+  Action action;// = Action::DoomNoAction;
+
+  // If the player is guiding the actions then we just look at what last action taken was
+  //if (env->isInActivePlayMode()) {
+  //  action = env->getLastAction();
+  //  env->advanceActionFrames();
+  //}
+  //else {
+
+  auto random = RNG::getInstance()->randZeroToOne();
   if (random < this->epsilon) {
     // Explore
-    action = static_cast<Action>(RNG::getInstance()->rand(0, DoomEnv::numActions-1));
+    action = static_cast<Action>(RNG::getInstance()->rand(0, this->net->getOutputDim()-1));
   }
   else {
-    // Exploit
     torch::NoGradGuard no_grad;
-    auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = DoomEnv::State::TENSOR_INPUT_HEIGHT_WIDTH();
-    auto stateTensor = this->useCuda ? state->tensor().cuda() : state->tensor();
-    assert((stateTensor.sizes() == torch::IntArrayRef({1, DoomEnv::State::NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})));
-    auto actionTensor = this->net->forward(stateTensor, DoomGuyNet::Model::Online);
-    action = static_cast<DoomEnv::Action>(torch::argmax(actionTensor, 1).item<int>());
-  }
+    
+    // Exploit
+    auto stateTensor = state.unsqueeze(0);
 
+    #ifdef DEBUG
+    assert((stateTensor.sizes() == torch::IntArrayRef({1, DoomEnv::State::NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})));
+    #endif
+
+    auto actionTensor = this->net->forward(this->useCuda ? stateTensor.cuda() : stateTensor, DoomGuyNetImpl::Model::Online);
+    auto bestActionTensor = torch::argmax(actionTensor, 1);
+    action = static_cast<DoomEnv::Action>(bestActionTensor.item<int>());
+  }
   // Decay epsilon
   this->epsilon = std::max(this->epsilonMin, this->epsilon*this->epsilonDecayMultiplier);
 
@@ -81,39 +89,7 @@ Action DoomGuy::act(DoomEnv::StatePtr& state) {
   return action;
 }
 
-void DoomGuy::cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, Action action, double reward, bool done) {
-  // Treat the replay buffer as a circular buffer, removing the oldest sample if we go over the max size
-  if (this->replayMemory.size() == REPLAY_MEMORY_MAX_SIZE) {
-    std::swap(this->replayMemory[0], this->replayMemory.back());
-    this->replayMemory.pop_back();
-  }
-
-  // IMPORTANT: We need to squeeze the state vectors since they are built with an extra 'batch number' dimension
-  // This batch number will not be needed for recall/replay
-  auto doneNum = done ? 1.0 : 0.0;
-  // TODO: Have an option to save memory by only converting to cuda only once we retrieve samples from the replay later on
-
-  // if (this->useCuda) {
-  //   this->replayMemory.push_back({
-  //     state->tensor().squeeze().cuda(), 
-  //     nextState->tensor().squeeze().cuda(),
-  //     torch::tensor({static_cast<int>(action)}).cuda(), 
-  //     torch::tensor({reward}).cuda(),
-  //     torch::tensor({doneNum}).cuda(),
-  //   });
-  // }
-  // else {
-  this->replayMemory.push_back({
-    state->tensor().squeeze(), 
-    nextState->tensor().squeeze(),
-    torch::tensor({static_cast<int>(action)}), 
-    torch::tensor({reward}),
-    torch::tensor({doneNum}),
-  });
-  //}
-}
-
-std::tuple<double, double> DoomGuy::learn() {
+std::tuple<double, double> DoomGuy::learn(std::unique_ptr<ReplayMemory>& replayMemory, size_t batchSize) {
   if (this->currStep % this->stepsBetweenSyncs == 0) {
     std::cout << "Synchronizing the target network with the online network." << std::endl;
     this->net->syncTarget(); // Current online network get loaded into the target network
@@ -121,20 +97,37 @@ std::tuple<double, double> DoomGuy::learn() {
   if (this->currStep % this->stepsBetweenSaves == 0) {
     this->save(); // Save the agent network to disk
   }
-  if (this->currStep < this->stepsExplore) {
+  if (this->currStep < this->stepsExplore || this->currStep % this->stepsBetweenLearning != 0) {
     return std::make_tuple(-1.0,-1.0);
   }
-  // NOTE: We currently learn at every step, so no need for this.
-  //if (this->currStep % this->stepsBetweenLearningOnline != 0) { return std::make_tuple(-1.0,-1.0); }
 
   // Sample from memory
-  auto [stateBatch, nextStateBatch, actionBatch, rewardBatch, doneBatch] = this->recall();
+  auto [stateBatch, nextStateBatch, actionBatch, rewardBatch, doneBatch] = replayMemory->randomRecall(batchSize);
+  if (this->useCuda) {
+    stateBatch = stateBatch.cuda();
+    nextStateBatch = nextStateBatch.cuda();
+    actionBatch = actionBatch.cuda();
+    rewardBatch = rewardBatch.cuda();
+    doneBatch = doneBatch.cuda();
+  }
+
+  #ifdef DEBUG
+  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = DoomEnv::State::TENSOR_INPUT_HEIGHT_WIDTH(this->net->getCurrVersion());
+  assert((stateBatch.sizes() == torch::IntArrayRef({
+    static_cast<int>(batchSize), DoomEnv::State::NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH
+  })));
+  assert((nextStateBatch.sizes() == torch::IntArrayRef({
+    static_cast<int>(batchSize), DoomEnv::State::NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH
+  })));
+  assert((rewardBatch.sizes() == torch::IntArrayRef({static_cast<int>(batchSize), 1})));
+  assert((doneBatch.sizes() == torch::IntArrayRef({static_cast<int>(batchSize), 1})));
+  #endif
 
   // Get the Temporal Difference (TD) estimate and target
   auto tdEst = this->tdEstimate(stateBatch, actionBatch);
-  assert((tdEst.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+  assert((tdEst.sizes() == torch::IntArrayRef({static_cast<int>(batchSize), 1})));
   auto tdTgt = this->tdTarget(rewardBatch, nextStateBatch, doneBatch);
-  assert((tdTgt.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+  assert((tdTgt.sizes() == torch::IntArrayRef({static_cast<int>(batchSize), 1})));
 
   // Backprogogate the loss through the Q-Online Network
   auto loss = this->updateQOnline(tdEst, tdTgt);
@@ -150,141 +143,163 @@ void DoomGuy::episodeEnded(size_t episodeNum) {
   this->lrScheduler->onEpochEnd(episodeNum);
 }
 
+
+std::string DoomGuy::optimizerSaveFilepath(size_t version, size_t saveNum) {
+  std::stringstream optimSavePath;
+  optimSavePath << this->saveDir << "/optimizer_v" << version << "_save_" << saveNum << ".chkpt";
+  return optimSavePath.str();
+}
+
+std::string DoomGuy::netSaveFilepath(size_t version, size_t saveNum) {
+  std::stringstream netSavePath;
+  netSavePath << this->saveDir << "/network_v" << version << "_save_" << saveNum << ".chkpt";
+  return netSavePath.str();
+}
+
 void DoomGuy::save() {
   fs::create_directories(this->saveDir); // Make sure the save path exists
 
   this->saveNumber++;
-  std::stringstream savePath;
-  savePath << this->saveDir << "/doomguy_net_v" << DoomGuyNet::version << "_save_" << this->saveNumber << ".chkpt";
-  
+
+  auto netSavePath = this->netSaveFilepath(this->net->getCurrVersion(), this->saveNumber);
   this->net->to(torch::kCPU);
-  torch::save(this->net, savePath.str()); // Make sure the network is always saved with the cpu version (so we can load it elsewhere!)
+  torch::save(this->net, netSavePath); // Make sure the network is always saved with the cpu version (so we can load it elsewhere!)
   if (this->useCuda) { this->net->to(torch::kCUDA); }      // Back to using cuda (if available)
 
-  std::cout << "DoomGuyNet saved to " << savePath.str() << " at step " << this->currStep << std::endl;
+  auto optimSavePath = this->optimizerSaveFilepath(this->net->getCurrVersion(), this->saveNumber);
+  torch::save(this->optimizer, optimSavePath);
+
+  std::cout << "[Step " << this->currStep << "]:" << std::endl
+            << "\tDoomGuyNet saved to " << netSavePath << std::endl
+            << "\tOptimizer saved to  " << optimSavePath << std::endl;
 }
 
 void DoomGuy::load(const std::string& chkptFilepath) {
-  /*
-  auto chkptVersion = 0; // Default version for the original checkpoint files is 0
 
+  auto chkptVersion = 0; // Default version for the original checkpoint files is 0
   // See what version the checkpoint file is...
   std::regex vRe("_v([[:digit:]]+)[_\\.]");
-  std::smatch matches;
-  if (std::regex_search(chkptFilepath, matches, vRe)) {
-    chkptVersion = std::stoi(matches[1].str());
-    if (chkptVersion < 0 || chkptVersion > DoomGuyNet::version) {
+  std::smatch vMatches;
+  if (std::regex_search(chkptFilepath, vMatches, vRe)) {
+    chkptVersion = std::stoi(vMatches[1].str());
+    if (chkptVersion < 0 || chkptVersion > DoomGuyNetImpl::version) {
       std::cerr << "Invalid checkpoint file version found: " << chkptVersion << ". "
-                << "Current support is from versions 0 to " << DoomGuyNet::version << "." << std::endl;
+                << "Current support is from versions 0 to " << DoomGuyNetImpl::version << "." << std::endl;
       std::cerr << "Ignoring checkpoint file " << chkptFilepath << std::endl;
       return;
     }
   }
-  */
+
+  if (chkptVersion != this->net->getCurrVersion()) {
+    // Network needs to be rebuilt under a different version
+    this->net = DoomGuyNet(State::NUM_CHANNELS, DoomEnv::getNumActions(chkptVersion), chkptVersion);
+  }
+
   torch::load(this->net, chkptFilepath);
-  this->rebuildOptimizer(this->lrScheduler->calcLR());
+  std::cout << "Loaded checkpoint from file " << chkptFilepath << "!" << std::endl;
+
+  // Check to see if there's an optimizer file to load as well
+  std::regex numRe("(.*)network_v[[:digit:]]+_save_([[:digit:]]+)\\.");
+  std::smatch numMatches;
+  if (std::regex_search(chkptFilepath, numMatches, numRe)) {
+    auto path = numMatches[1].str();
+    auto numStr = numMatches[2].str();
+
+    std::stringstream optimFilepathSS;
+    optimFilepathSS << path << "optimizer_v" << this->net->getCurrVersion() << "_save_" << numStr << ".chkpt";
+    auto optimFilepath = optimFilepathSS.str();
+
+    if (std::filesystem::exists(optimFilepath)) {
+      torch::load(this->optimizer, optimFilepath);
+      std::cout << "Loaded optimizer from file " << optimFilepath << "!" << std::endl;
+      this->rebuildScheduler();
+    }
+    else {
+      std::cout << "Warning: No optimizer found at expected file path (" << optimFilepath << ")." << std::endl;
+      this->optimizer.defaults().set_lr(this->lrScheduler->calcLR());
+    }
+  }
+  
   this->net->freezeTarget();
   if (this->useCuda) { this->net->to(torch::kCUDA); }
 }
 
-/**
- * Recall a tuple of stacked tensors, each stack is the size of the batch
- * and is setup to be fed directly to the NN.
- */
-DoomGuy::ReplayData DoomGuy::recall() {
-  auto samples = this->randomSamples(DEFAULT_REPLAY_BATCH_SIZE);
-  assert(samples.size() == DEFAULT_REPLAY_BATCH_SIZE);
-
-  // Stack the samples...
-  std::array<
-    std::array<torch::Tensor, DEFAULT_REPLAY_BATCH_SIZE>, 
-    std::tuple_size<DoomGuy::ReplayData>::value
-  > stackLists;
-
-  for (auto i = 0; i < stackLists.size(); i++) {
-    auto& stackList = stackLists[i];
-    for (auto j = 0; j < stackList.size(); j++) {
-      stackList[j] = this->useCuda ? samples[j][i].cuda() : std::move(samples[j][i]);
-    }
-  }
-
-  ReplayData result;
-  for (auto i = 0; i < result.size(); i++) {
-    result[i] = this->useCuda ? torch::stack(stackLists[i]).cuda() : torch::stack(stackLists[i]);
-  }
-  return result;
-}
-
-// NOTE: Move semantics keep the vector from being copied!
-std::vector<DoomGuy::ReplayData> DoomGuy::randomSamples(size_t n) {
-  assert(this->replayMemory.size() >= n && "Not enough replay memory has been stored yet, increase exploration time and/or decrease your batch size.");
-
-  std::vector<DoomGuy::ReplayData> samples;
-  samples.reserve(n);
-  std::sample(
-    this->replayMemory.begin(), this->replayMemory.end(), 
-    std::back_inserter(samples), n, std::mt19937{std::random_device{}()}
-  );
-
-  return samples;
-}
-
 torch::Tensor DoomGuy::tdEstimate(torch::Tensor stateBatch, torch::Tensor actionBatch) {
-  using namespace torch::indexing;
 
-  assert((stateBatch.sizes() == torch::IntArrayRef({
-    DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::State::NUM_CHANNELS, 
-    DoomEnv::State::TENSOR_INPUT_HEIGHT_WIDTH()[0], DoomEnv::State::TENSOR_INPUT_HEIGHT_WIDTH()[1]
-  })));
-  assert((actionBatch.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
-
-  // Get the network output, a tensor of the form [batch_size, Q(s,a)]
-  // Where Q(s,a) is the online network Q-Values for each action, with a dimension of DoomEnv::numActions
-  auto currentQ = this->net->forward(stateBatch, DoomGuyNet::Model::Online);
-  assert((currentQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::numActions})));
+  // Get the network output, a tensor of the form [batch_size, Q_values]
+  // Where Q_Values are the online network Q-Values for each action, with a dimension of DoomEnv::numActions
+  auto currentQ = this->net->forward(stateBatch, DoomGuyNetImpl::Model::Online);
+  assert((currentQ.sizes() == torch::IntArrayRef({stateBatch.sizes()[0], static_cast<int>(this->net->getOutputDim())})));
 
   // We need to select the Q-values in currentQ for the given batch of actions i.e., index into each batch
-  // by the actions specified in actionBatch...
-  //currentQ[torch.arange(32),actionBatch.flatten()].unsqueeze(0).t()
-  auto indexedQ = currentQ.index({torch::arange(currentQ.size(0)), actionBatch.flatten()}).unsqueeze_(0).t_();
-  assert((indexedQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+  // by the actions specified in actionBatch
+  auto gatheredQ = currentQ.gather(1, actionBatch);
+  assert((gatheredQ.sizes() == torch::IntArrayRef({actionBatch.sizes()[0], 1})));
 
-  return indexedQ; // [DEFAULT_REPLAY_BATCH_SIZE, 1]
+  return gatheredQ;
 }
 
 torch::Tensor DoomGuy::tdTarget(torch::Tensor rewardBatch, torch::Tensor nextStateBatch, torch::Tensor doneBatch) {
-  using namespace torch::indexing;
+  torch::NoGradGuard no_grad;
+  
+  auto nextQOnline = this->net->forward(nextStateBatch, DoomGuyNetImpl::Model::Online);
+  auto nextQTarget = this->net->forward(nextStateBatch, DoomGuyNetImpl::Model::Target);
+  assert((nextQOnline.sizes() == torch::IntArrayRef({nextStateBatch.sizes()[0], static_cast<int>(this->net->getOutputDim())})));
+  assert((nextQTarget.sizes() == torch::IntArrayRef({nextStateBatch.sizes()[0], static_cast<int>(this->net->getOutputDim())})));
 
-  assert((rewardBatch.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
-  assert((nextStateBatch.sizes() == torch::IntArrayRef({
-    DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::State::NUM_CHANNELS, 
-    DoomEnv::State::TENSOR_INPUT_HEIGHT_WIDTH()[0], DoomEnv::State::TENSOR_INPUT_HEIGHT_WIDTH()[1]
-  })));
-  assert((doneBatch.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
+  auto nextQOnlineBestActionIndices = std::get<1>(nextQOnline.max(1)).unsqueeze(1);
+  auto bestNextQ = nextQTarget.gather(1, nextQOnlineBestActionIndices);
+  assert((bestNextQ.sizes() == torch::IntArrayRef({nextQTarget.sizes()[0], 1})));
 
-  torch::NoGradGuard no_grad; // Don't do any gradient on the target network, it stays fixed until a sync occurs
-
-  auto nextStateQ = this->net->forward(nextStateBatch, DoomGuyNet::Model::Online);
-  assert((nextStateQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::numActions})));
-
-  auto bestActionBatch = torch::argmax(nextStateQ, 1);
-  assert((bestActionBatch.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE})));
-
-  auto nextQ = this->net->forward(nextStateBatch, DoomGuyNet::Model::Target);
-  assert((nextQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, DoomEnv::numActions})));
-
-  auto bestNextQ = nextQ.index({torch::arange(nextQ.size(0)), bestActionBatch}).unsqueeze_(0).t_();
-  assert((bestNextQ.sizes() == torch::IntArrayRef({DEFAULT_REPLAY_BATCH_SIZE, 1})));
-
-  return (rewardBatch + (1.0 - doneBatch.to(torch::kFloat)) * this->gamma * bestNextQ).to(torch::kFloat);
+  return rewardBatch + this->gamma * bestNextQ * (1 - doneBatch);
 }
 
 torch::Scalar DoomGuy::updateQOnline(torch::Tensor tdEstimate, torch::Tensor tdTarget) {
   // NOTE: Both tdEstimate and tdTarget are tensors of size [DEFAULT_REPLAY_BATCH_SIZE, 1]
-  auto loss = this->lossFn(tdEstimate, tdTarget);
-  this->optimizer->zero_grad();
+  auto loss = this->lossFn(tdEstimate, tdTarget.detach());
+  
+  std::vector<torch::Tensor> befores;
+  std::vector<std::string> layerNames;
+  auto layerCount = 0;
+  for (const auto& params : this->net->online->parameters()) {
+    befores.push_back(params.clone());
+    layerCount++;
+    //layerNames.push_back(this->net->online[layerCount++]->name());
+  }
+
+  //std::cout << this->net->online->parameters().size() << std::endl;
+  //auto beforeHasGrad = this->net->parameters()[0].grad();
+  this->optimizer.zero_grad();
   loss.backward();
-  this->optimizer->step();
+  this->optimizer.step();
+
+  std::vector<torch::Tensor> afters;
+  for (auto i = 0; i < befores.size(); i++) {
+    afters.push_back(this->net->online->parameters()[i].clone());
+  }
+  //auto afterHasGrad = this->net->parameters()[0].grad();
+
+  //std::cout << before << std::endl;
+  //std::cout << after << std::endl;
+
+  if (this->currStep % 500 == 0) {
+    std::vector<std::string> equalLayers;
+    for (auto i = 0; i < befores.size(); i++) {
+      if (torch::equal(befores[i], afters[i])) {
+        equalLayers.push_back(std::to_string(i));// + ": " + layerNames[i]);
+      }
+    }
+    std::stringstream ss;
+    ss << "Warning: Online network isn't changing for " << equalLayers.size() << "/" << layerCount << " layers: ";
+    std::copy(equalLayers.begin(), equalLayers.end(), std::ostream_iterator<std::string>(ss, ", "));
+    //ss << " (possible layers: [";
+    //std::copy(checkLayerIndices.begin(), checkLayerIndices.end(), std::ostream_iterator<int>(ss, ","));
+    //ss << "])";
+    std::cout << "[Step: " << this->currStep << "]: " 
+              << (equalLayers.size() != 0 ? ss.str() : "Online network is changing on all layers.") << std::endl
+              << "Current learning rate is " << std::fixed << std::setprecision(6) << this->getLearningRate() << std::endl
+              << "Current loss is " << loss.item<double>() << std::endl;
+  }
+
   return loss.item();
 }
-

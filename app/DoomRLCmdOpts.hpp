@@ -15,8 +15,10 @@ public:
   size_t stepsSave;
   size_t stepsSync;
   double startEpsilon;
+  double epsilonMin;
   double epsilonDecay;
   double learningRate;
+  bool isActivePlay;
   std::string checkpointFilepath;
   std::string doomMap;
 

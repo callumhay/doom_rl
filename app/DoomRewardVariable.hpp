@@ -64,8 +64,6 @@ using DoomRewardVarInt = DoomRewardVariableT<int>;
  */
 class DoomPosRewardVariable : public DoomRewardVariable {
 public:
-  static constexpr double rewardRadiusDiff = 100.0;
-
   DoomPosRewardVariable(vizdoom::GameVariable varPosX, vizdoom::GameVariable varPosY, vizdoom::GameVariable varPosZ):
     DoomRewardVariable("Player position"), varPosX(varPosX), varPosY(varPosY), varPosZ(varPosZ), currMaxRadius(0) {}
 
@@ -90,15 +88,14 @@ public:
     auto rDiff = dist - this->currMaxRadius;
 
     // If the distance travelled is larger than the current largest distance by the rewardRadiusDiff then give a reward
-    if (rDiff >= rewardRadiusDiff) {
-      reward += 0.1*std::floor(dist/rewardRadiusDiff);
-      std::cout << std::fixed << std::setprecision(1)
-                << this->varDescription << " changed - distance increased by " << rDiff 
-                << " (total distance from episode start: " << dist << ")"
-                << " [Reward: " << reward << "]" << std::endl;
+    if (rDiff > 0) {
+      reward += 0.001*rDiff;
+      //std::cout << std::fixed << std::setprecision(3)
+      //          << this->varDescription << " changed - distance increased by " << rDiff 
+      //          << " (total distance from episode start: " << dist << ")"
+      //          << " [Reward: " << reward << "]" << std::endl;
       this->currMaxRadius = dist;
     }
-
     return reward;
   }
 

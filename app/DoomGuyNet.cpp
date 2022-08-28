@@ -1,7 +1,7 @@
 #include "DoomGuyNet.hpp"
 
-DoomGuyNet::DoomGuyNet(size_t inputChannels, size_t outputDim, size_t version) : 
-currVersion(version), inputChannels(inputChannels), outputDim(outputDim) {
+DoomGuyNetImpl::DoomGuyNetImpl(size_t inputChannels, size_t outputDim, size_t version) : 
+currVersion(version), inputChannels(inputChannels), outputDim(outputDim), online(nullptr), target(nullptr) {
   this->buildNetworks(this->currVersion);
 }
 
@@ -24,44 +24,40 @@ std::shared_ptr<Module> DoomGuyNet::clone(const optional<Device>& device = nullo
 }
 */
 
-void DoomGuyNet::pretty_print(std::ostream& stream) const {
+void DoomGuyNetImpl::pretty_print(std::ostream& stream) const {
   stream << "Target and Online Network Architecture: " << std::endl;
   stream << this->online << std::endl;
 }
 
-void DoomGuyNet::buildNetworks(size_t version) {
-  assert(version <= DoomGuyNet::version); // Check for unsupported version
+void DoomGuyNetImpl::buildNetworks(size_t version) {
+  assert(version <= DoomGuyNetImpl::version); // Check for unsupported version
 
   torch::nn::Sequential onlineNet;
   torch::nn::Sequential targetNet;
   std::cout << "Building online and target networks (DoomRL agent network v" << version << ")" << std::endl;
-  switch (DoomGuyNet::version) {
-    case 0:
-      onlineNet = DoomGuyNet::buildV0Network(this->inputChannels, this->outputDim);
-      targetNet = DoomGuyNet::buildV0Network(this->inputChannels, this->outputDim);
-      break;
-    
-    case 1:
-      onlineNet = DoomGuyNet::buildV1Network(this->inputChannels, this->outputDim);
-      targetNet = DoomGuyNet::buildV1Network(this->inputChannels, this->outputDim);
-      break;
+  std::function<torch::nn::Sequential(size_t, size_t)> buildFunc;
+  switch (DoomGuyNetImpl::version) {
+    case 0: buildFunc = DoomGuyNetImpl::buildV0Network; break;
+    case 1: buildFunc = DoomGuyNetImpl::buildV1Network; break;
+    case 2: buildFunc = DoomGuyNetImpl::buildV2Network; break;
+    case 3: buildFunc = DoomGuyNetImpl::buildV3Network; break;
 
     default:
       assert(false);
       return;
   }
 
-  this->target = this->register_module("target", onlineNet);
-  this->online = this->register_module("online", targetNet);
 
-  // Q-Target parameters are frozen
-  for (auto& p : this->target->parameters()) { p.set_requires_grad(false); }
+  this->online = this->register_module("online", buildFunc(this->inputChannels, this->outputDim));
+  this->target = this->register_module("target", buildFunc(this->inputChannels, this->outputDim));
+
+  this->initNetworkParams();
   this->currVersion = version;
 
-  this->pretty_print(std::cout);
+  //this->pretty_print(std::cout);
 }
 
-torch::nn::Sequential DoomGuyNet::buildV0Network(size_t inputChannels, size_t outputDim) {
+torch::nn::Sequential DoomGuyNetImpl::buildV0Network(size_t inputChannels, size_t outputDim) {
   constexpr int layer0OutChannels = 32;
   constexpr int layer1OutChannels = 64;
   constexpr int layer2OutChannels = 64;
@@ -80,7 +76,7 @@ torch::nn::Sequential DoomGuyNet::buildV0Network(size_t inputChannels, size_t ou
   });
 }
 
-torch::nn::Sequential DoomGuyNet::buildV1Network(size_t inputChannels, size_t outputDim) {
+torch::nn::Sequential DoomGuyNetImpl::buildV1Network(size_t inputChannels, size_t outputDim) {
   constexpr int conv0OutChannels = 3;
   constexpr int conv1OutChannels = 96;
   constexpr int conv2OutChannels = 256;
@@ -108,4 +104,51 @@ torch::nn::Sequential DoomGuyNet::buildV1Network(size_t inputChannels, size_t ou
     {"v1_relu6", torch::nn::ReLU()},
     {"v1_linear2_4096_out", torch::nn::Linear(torch::nn::LinearOptions(4096, outputDim))}
   });
+}
+
+torch::nn::Sequential DoomGuyNetImpl::buildV2Network(size_t inputChannels, size_t outputDim) {
+  /*
+  constexpr int conv2d0Params[] = {256,8,1}; // output_channels, kernel, stride
+
+  using DimArr = std::array<int,3>;
+  constexpr int startDims[] = {320,200,3};
+  constexpr DimArr conv2d0OutputDims = ConvUtils::calcShapeConv2d(startDims[0], startDims[1], conv2d0Params[0], conv2d0Params[1], conv2d0Params[2]); // [313,193,256]
+  */
+
+  return torch::nn::Sequential(
+    torch::nn::Conv2d(torch::nn::Conv2dOptions(inputChannels, 256, 8).stride(4)),
+    torch::nn::ReLU(),
+    torch::nn::Conv2d(torch::nn::Conv2dOptions(256, 256, 4).stride(3)),
+    torch::nn::ReLU(),
+    torch::nn::Conv2d(torch::nn::Conv2dOptions(256, 256, 3).stride(2)),
+    torch::nn::ReLU(),
+    torch::nn::Conv2d(torch::nn::Conv2dOptions(256, 128, 2).stride(1)),
+    torch::nn::ReLU(),
+    torch::nn::Flatten(),
+    torch::nn::Dropout(),
+    torch::nn::Linear(torch::nn::LinearOptions(8448, 4096)),
+    torch::nn::ReLU(),
+    torch::nn::Dropout(),
+    torch::nn::Linear(torch::nn::LinearOptions(4096, 4096)),
+    torch::nn::ReLU(),
+    torch::nn::Dropout(),
+    torch::nn::Linear(torch::nn::LinearOptions(4096, outputDim))
+  );
+}
+
+torch::nn::Sequential DoomGuyNetImpl::buildV3Network(size_t inputChannels, size_t outputDim) {
+  return torch::nn::Sequential(
+    torch::nn::Conv2d(torch::nn::Conv2dOptions(inputChannels, 3, 9).stride(1)), // [w,h,c] = [152,92,3]
+    torch::nn::ReLU(),
+    torch::nn::Flatten(),
+    torch::nn::Linear(41952, 2048),
+    torch::nn::ReLU(),
+    torch::nn::Linear(2048, 4096),
+    torch::nn::ReLU(),
+    torch::nn::Linear(4096, 1024),
+    torch::nn::ReLU(),
+    torch::nn::Linear(1024, 512),
+    torch::nn::ReLU(),
+    torch::nn::Linear(512, outputDim)
+  );
 }

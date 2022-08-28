@@ -19,7 +19,7 @@ CosAnnealLRScheduler::CosAnnealLRScheduler(
   size_t cycleLength, double multFactor
 ):
 LRScheduler(optimizer), avgBatchesPerEpoch(static_cast<int64_t>(expectedStepsPerEpoch)), batchesInLastEpoch(0),
-minLR(minLR), maxLR(maxLR), lrDecay(lrDecay), cycleLength(cycleLength), multFactor(multFactor),
+minLR(minLR), maxLR(maxLR), lrDecay(lrDecay), cycleLength(cycleLength), multFactor(multFactor), enabled(true),
 batchSinceRestart(0), nextRestart(cycleLength), lossStepCount(0), dLossTotalInEpoch(0), avgLoss(0) {
   assert(this->avgBatchesPerEpoch > 0);
   auto lrs = get_current_lrs();

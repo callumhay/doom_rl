@@ -13,8 +13,11 @@ target_sources(doom_rl
     DoomRLLogger.cpp
     DoomRLCmdOpts.hpp
     DoomRLCmdOpts.cpp
+    ReplayMemory.hpp
     RNG.hpp
     RNG.cpp
     CosAnnealLRScheduler.hpp
     CosAnnealLRScheduler.cpp
+    StringUtils.hpp
+    debug_doom_rl.hpp
 )

@@ -6,12 +6,17 @@
 
 #include <torch/torch.h>
 
+#include "debug_doom_rl.hpp"
+#include "StringUtils.hpp"
+
 #include "RNG.hpp"
 #include "DoomEnv.hpp"
 #include "DoomGuy.hpp"
 #include "DoomRLLogger.hpp"
 #include "DoomRLCmdOpts.hpp"
+#include "ReplayMemory.hpp"
 
+constexpr size_t actionFrameSkip = 4;
 constexpr char checkptDirBasePath[] = "./checkpoints";
 
 int main(int argc, char* argv[]) {
@@ -31,32 +36,43 @@ int main(int argc, char* argv[]) {
   auto logger = std::make_unique<DoomRLLogger>(checkptDirBasePath, checkPtDirPath);
   logger->logStartSession(*cmdOpts);
 
-  // Setup our agent and gym / environment
+  // Setup our replayMemory, agent and gym / environment
+  auto replayMemory = std::make_unique<ReplayMemory>(ReplayMemory::REPLAY_MEMORY_MAX_SIZE);
   auto guy = std::make_unique<DoomGuy>(
-    checkPtDirPath, cmdOpts->stepsPerEpMax, 
-    cmdOpts->stepsExplore, cmdOpts->stepsSave, cmdOpts->stepsSync,
-    cmdOpts->startEpsilon, cmdOpts->epsilonDecay, cmdOpts->learningRate
+    checkPtDirPath, cmdOpts->stepsPerEpMax, cmdOpts->stepsExplore, cmdOpts->stepsSave, cmdOpts->stepsSync,
+    cmdOpts->startEpsilon, cmdOpts->epsilonMin, cmdOpts->epsilonDecay, cmdOpts->learningRate
   );
-  auto env = std::make_unique<DoomEnv>(cmdOpts->stepsPerEpMax, 4);
+  auto env = std::make_unique<DoomEnv>(cmdOpts->stepsPerEpMax, actionFrameSkip, cmdOpts->isActivePlay);
 
   // If a checkpoint file was given, load it
   if (!cmdOpts->checkpointFilepath.empty()) {
-    std::cout << "Loading from checkpoint file " << cmdOpts->checkpointFilepath << "..." << std::endl;
     guy->load(cmdOpts->checkpointFilepath);
   }
+  // Check for cycling maps
+  std::vector<std::string> cycleMaps;
+  if (cmdOpts->doomMap.find(',') != std::string::npos) {
+    cycleMaps = StringUtils::split(cmdOpts->doomMap, ',');
+  }
+
+  guy->train(true);
 
   auto prevTime = std::chrono::steady_clock::now();
-
   std::cout << "Running " << cmdOpts->numEpisodes << " episodes of DoomGuy..." << std::endl;
+
   for (auto e = 0; e < cmdOpts->numEpisodes; e++) {
     const auto currEpNum = e+1;
 
-    auto updateEnvMap = [&env, &cmdOpts, e]() {
+    auto updateEnvMap = [&env, &cmdOpts, cycleMaps, e]() {
       if (cmdOpts->doomMap.compare(DoomRLCmdOpts::doomMapCycle) == 0) {
         if (e != 0) { env->setCycledMap(); }
       }
       else if (cmdOpts->doomMap.compare(DoomRLCmdOpts::doomMapRandom) == 0) {
         env->setRandomMap();
+      }
+      else if (cycleMaps.size() > 0) {
+        static auto currCycleMapIdx = 0;
+        env->setMap(cycleMaps[currCycleMapIdx]);
+        currCycleMapIdx = (currCycleMapIdx+1) % cycleMaps.size();
       }
       else {
         env->setMap(cmdOpts->doomMap);
@@ -68,21 +84,24 @@ int main(int argc, char* argv[]) {
     // Time to play Doom!
     // Set the map, reset the environment and get the initial state
     updateEnvMap();
-    auto state = env->reset();
+    
+    const auto networkVersion = guy->getNetworkVersion();
+    auto state = env->reset(networkVersion);
+    replayMemory->initState(state);
 
     while (true) {
-
-      auto action = guy->act(state); // Run DoomGuy on the current state
+      auto action = guy->act(state, env); // Run DoomGuy on the current state
 
       // Perform the action in the environment and observe the next state, 
       // reward and whether we're finished the episode
-      auto [nextState, reward, done] = env->step(action);
+      auto [nextState, reward, done] = env->step(action, networkVersion);
 
       // Remember the full step sequence for recall later on
-      guy->cache(state, nextState, action, reward, done);
+      replayMemory->cache(nextState, static_cast<int>(action), reward, done);
+      if (replayMemory->getCacheSize() < ReplayMemory::DEFAULT_REPLAY_BATCH_SIZE+1) { continue; }
 
       // Learn - this may just exit with [-1,-1] if we're still exploring
-      auto [q, loss] = guy->learn();
+      auto [q, loss] = guy->learn(replayMemory, ReplayMemory::DEFAULT_REPLAY_BATCH_SIZE);
       
       logger->logStep(reward, loss, q, guy->getLearningRate(), guy->getEpsilon()); // Log our results for the step
       
@@ -91,12 +110,13 @@ int main(int argc, char* argv[]) {
         prevTime = currTime;
         std::cout << "[Episode #" << currEpNum << "]: " << env->getStepsPerformed() << " steps of episode, total steps across all episodes: " << guy->getCurrStep() << std::endl;
       }
-
+    
       // Update to the next state and check to see if we're done the episode
       if (done) {
         std::cout << "Finished episode." << std::endl;
         break;
       }
+
       state = std::move(nextState);
     }
 

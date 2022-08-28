@@ -9,30 +9,35 @@
 
 #include "DoomEnv.hpp"
 #include "CosAnnealLRScheduler.hpp"
+#include "DoomGuyNet.hpp"
 
-class DoomGuyNet;
+class ReplayMemory;
 
 class DoomGuy {
 public:
-  DoomGuy(const std::string& saveDir, size_t stepsPerEpisode, size_t stepsExplore, size_t stepsBetweenSaves, size_t stepsBetweenSyncs, 
-    double startEpsilon, double epsilonDecay, double learningRate);
+  DoomGuy(const std::string& saveDir, size_t stepsPerEpisode, 
+    size_t stepsExplore, size_t stepsBetweenSaves, size_t stepsBetweenSyncs, 
+    double startEpsilon, double epsilonMin, double epsilonDecay, double learningRate);
+
+
+  void train(bool on = true) { this->net->train(on); }
 
   // Given a state, choose an epsilon-greedy action
-  DoomEnv::Action act(DoomEnv::StatePtr& state); 
-
-  // Add the experience to memory
-  void cache(DoomEnv::StatePtr& state, DoomEnv::StatePtr& nextState, DoomEnv::Action action, double reward, bool done);
+  DoomEnv::Action act(torch::Tensor state, std::unique_ptr<DoomEnv>& env); 
 
   // Update online action value (Q) function with a batch of experiences
   // Returns <mean_q, loss>
-  std::tuple<double, double> learn();
+  std::tuple<double, double> learn(std::unique_ptr<ReplayMemory>& replayMemory, size_t batchSize);
 
   void episodeEnded(size_t episodeNum);
 
+  auto getNetworkVersion() const { return this->net->getCurrVersion(); }
   auto getCurrStep() const { return this->currStep; }
   auto getEpsilon() const { return this->epsilon; }
-  auto getLearningRate() const { return static_cast<torch::optim::AdamOptions&>(this->optimizer->param_groups()[0].options()).lr(); }
+  auto getLearningRate() const { return this->optimizer.param_groups()[0].options().get_lr(); }
 
+  std::string optimizerSaveFilepath(size_t version, size_t saveNum);
+  std::string netSaveFilepath(size_t version, size_t saveNum);
   void save();
   void load(const std::string& chkptFilepath);
 
@@ -40,35 +45,35 @@ private:
   std::string saveDir;
   size_t currStep;
   size_t stepsPerEpisode;
-  size_t stepsBetweenSaves;  // Number of steps between saving the networks to disk
-  size_t stepsBetweenSyncs;  // Number of steps between synchronizing between the Q-Target and Online networks
-  size_t stepsExplore;       // Number of steps to explore before training starts
+  size_t stepsBetweenSaves;    // Number of steps between saving the networks to disk
+  size_t stepsBetweenSyncs;    // Number of steps between synchronizing between the Q-Target and Online networks
+  size_t stepsExplore;         // Number of steps to explore before training starts
+  size_t stepsBetweenLearning; // Number of steps between when we actually learn (generally it's good not to learn every step with DQN)
 
   bool useCuda;      // Whether or not the model makes use of CUDA
   size_t saveNumber; // Keep track of the number of saves so far
 
   // Training options
-  size_t batchSize;               // Batch size when training with replay memory
   double epsilon;                 // The current exploration probability in the greedy-epsilon policy
   double epsilonDecayMultiplier;  // epislon decays as a multiple of this value after each step
   double epsilonMin;              // The minimum allowable epislon value
   double gamma;                   // The discount factor
   
-  std::shared_ptr<DoomGuyNet> net; // NOTE: This needs to be shared in order for torch::save to work
-  std::unique_ptr<torch::optim::Adam> optimizer;
+  DoomGuyNet net;
+  torch::optim::Adam optimizer;
   std::unique_ptr<CosAnnealLRScheduler> lrScheduler;
   torch::nn::SmoothL1Loss lossFn;
 
-  // Data that is stored in the replay memory - an array of tensors corresponding to
-  // [state, nextState, action, reward, done]
-  using ReplayData = std::array<torch::Tensor, 5>;
-  std::vector<ReplayData> replayMemory;
+  void rebuildScheduler() {
+    // NOTE: an epoch is one complete pass through the training data... in RL this is pretty meaningless,
+    // to start so that it doesn't overcompensate at the start
+    auto expStepsPerEpoch = this->stepsPerEpisode/100;
+    if (this->lrScheduler != nullptr) {
+      expStepsPerEpoch = this->lrScheduler->getAvgBatchesPerEpoch();
+    }
+    this->lrScheduler = std::make_unique<CosAnnealLRScheduler>(this->optimizer, expStepsPerEpoch);
+  }
 
-  void rebuildOptimizer(double lr);
-
-  ReplayData recall();
-  std::vector<ReplayData> randomSamples(size_t n);
-  
   torch::Tensor tdEstimate(torch::Tensor stateBatch, torch::Tensor actionBatch);
   torch::Tensor tdTarget(torch::Tensor rewardBatch, torch::Tensor nextStateBatch, torch::Tensor doneBatch);
   torch::Scalar updateQOnline(torch::Tensor tdEstimate, torch::Tensor tdTarget);

@@ -5,22 +5,32 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Python: Current File",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "args": ["--csv", "../build/checkpoints/2022-08-27T14-21-32/doom_rl_Sat_Aug_27_14:21:32_2022.csv"],
+      "cwd": "${workspaceFolder}/viewer",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
       "name": "Attach to DoomRL",
       "type": "cppdbg",
       "request": "attach",
       "program": "${workspaceFolder}/build/doom_rl",
       "MIMode": "gdb",
       "setupCommands": [
-          {
-              "description": "Enable pretty-printing for gdb",
-              "text": "-enable-pretty-printing",
-              "ignoreFailures": true
-          },
-          {
-              "description":  "Set Disassembly Flavor to Intel",
-              "text": "-gdb-set disassembly-flavor intel",
-              "ignoreFailures": true
-          }
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        {
+          "description": "Set Disassembly Flavor to Intel",
+          "text": "-gdb-set disassembly-flavor intel",
+          "ignoreFailures": true
+        }
       ]
     },
     {
@@ -28,23 +38,23 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/build/doom_rl",
-      "args": ["--map", "E1M2", "--epsilon", "0.5", "--save_steps", "50000", "--sync_steps", "10000", "--checkpoint", "./checkpoints/2022-08-23T18-46-08/doomguy_net_v1_save_1.chkpt"],
+      "args": ["--lr", "0.032", "--explore_steps", "10000", "--save_steps", "100000", "--map", "E1M2,E1M3,E1M4"],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/build",
       "environment": [],
       "externalConsole": false,
       "MIMode": "gdb",
       "setupCommands": [
-          {
-              "description": "Enable pretty-printing for gdb",
-              "text": "-enable-pretty-printing",
-              "ignoreFailures": true
-          },
-          {
-              "description":  "Set Disassembly Flavor to Intel",
-              "text": "-gdb-set disassembly-flavor intel",
-              "ignoreFailures": true
-          }
+        {
+          "description": "Enable pretty-printing for gdb",
+          "text": "-enable-pretty-printing",
+          "ignoreFailures": true
+        },
+        {
+          "description": "Set Disassembly Flavor to Intel",
+          "text": "-gdb-set disassembly-flavor intel",
+          "ignoreFailures": true
+        }
       ]
     }
   ]

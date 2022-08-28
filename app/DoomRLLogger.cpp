@@ -13,7 +13,7 @@
 namespace fs = std::filesystem;
 
 constexpr size_t MAX_RUNNING_AVG_SIZE = 100;
-constexpr std::array<size_t, 12> logWidths = {8, 8, 6, 10, 15, 12, 14, 16, 10, 10, 15, 27};
+constexpr std::array<size_t, 12> logWidths = {8, 8, 6, 10, 15, 12, 14, 16, 10, 10, 12, 27};
 
 template<typename T, std::size_t N>
 constexpr T arraySum(const std::array<T,N>& array) {

@@ -6,7 +6,7 @@
 
 using namespace vizdoom;
 
-DoomEnv::State::State(vizdoom::ImageBufferPtr screenBuf) {
+torch::Tensor DoomEnv::State::buildStateTensor(vizdoom::ImageBufferPtr screenBuf, size_t networkVersion) {
   assert(screenBuf != nullptr);
   // Preprocess the game's framebuffer (stored as a flat array of uint8_t)...
 
@@ -16,43 +16,51 @@ DoomEnv::State::State(vizdoom::ImageBufferPtr screenBuf) {
     {SCREEN_BUFFER_HEIGHT, SCREEN_BUFFER_WIDTH, NUM_CHANNELS}, 
     torch::TensorOptions().dtype(torch::kUInt8)
   );
+  // Make sure the state tensor is formatted the way a network expects (i.e., C x H x W)
+  auto preppedTensor = tempTensor.permute({2,0,1}).toType(torch::kFloat32).div_(255.0);
 
-  // Reformat the tensor to be in the form that the interpolate function expects: Batch x Channel x Height x Width
-  auto preppedTensor = tempTensor.permute({2,0,1}).toType(torch::kFloat).div_(255.0).unsqueeze_(0);
   // sizes (shape) is now [1,channels,height,width], also converted channel values from [0,255] -> [0.0,1.0]
   //std::cout << preppedTensor.sizes() << std::endl;
-  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = TENSOR_INPUT_HEIGHT_WIDTH();
-  switch (DoomGuyNet::version) {
-    case 0:
+  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = TENSOR_INPUT_HEIGHT_WIDTH(networkVersion);
+  switch (networkVersion) {
+    
+    case 0: case 3: {
       // Downsample the screen buffer tensor - this will make a new tensor (so we don't need to clone anything)
       // NOTE: Only dtypes for Float32, Float64 are supported by interpolate!
-      this->screenTensor = torch::nn::functional::interpolate(
-        preppedTensor, 
+      preppedTensor = torch::nn::functional::interpolate(
+        preppedTensor.unsqueeze(0), // Reformat the tensor to be in the form that the interpolate function expects: Batch x Channel x Height x Width
         torch::nn::functional::InterpolateFuncOptions()
         .size(std::vector<int64_t>({TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH}))
         .align_corners(true)
         .mode(torch::kBilinear)
-      );
+      ).squeeze();
       break;
-    case 1:
+    }
+
+    case 1: case 2:
       // No downsampling, just maintain the same size as the screen buffer.
-      this->screenTensor = preppedTensor;
       break;
+
     default:
       assert(false);
       break;
   }
 
-
-  //std::cout << this->screenTensor << std::endl;
-
-  // this->screenTensor is now ready to be fed into the NN, with
-  // shape/sizes = [1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH]
-  assert((this->screenTensor.sizes() == torch::IntArrayRef({1, NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})));
+  assert((preppedTensor.sizes() == torch::IntArrayRef({NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})));
+  return preppedTensor;
 };
 
-DoomEnv::DoomEnv(size_t maxSteps, size_t frameSkip, const std::string& mapName): 
-game(std::make_unique<DoomGame>()), lastState(nullptr), frameSkip(frameSkip), maxSteps(maxSteps), 
+torch::Tensor DoomEnv::State::buildEmptyStateTensor(size_t networkVersion) {
+  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = TENSOR_INPUT_HEIGHT_WIDTH(networkVersion);
+  return torch::zeros({NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH});
+}
+
+constexpr double killReward   = 10.0;
+constexpr double deathReward  = -20.0;
+constexpr double mapEndReward = 100.0;
+
+DoomEnv::DoomEnv(size_t maxSteps, size_t frameSkip, bool activePlayEnabled, const std::string& mapName): 
+game(std::make_unique<DoomGame>()), frameSkip(frameSkip), maxSteps(maxSteps), 
 stepsPerformed(0), doomMapToLoadNext(mapName) {
   // Setup the ViZDoom game environment...
   this->initGameOptions();
@@ -70,13 +78,77 @@ stepsPerformed(0), doomMapToLoadNext(mapName) {
   // Makes episodes start after 10 tics (~after raising the weapon)
   this->game->setEpisodeStartTime(10);
   // Sets ViZDoom mode (PLAYER, ASYNC_PLAYER, SPECTATOR, ASYNC_SPECTATOR, PLAYER mode is default)
-  this->game->setMode(PLAYER);
+  this->game->setMode(activePlayEnabled ? SPECTATOR : PLAYER);
 
   // Disable some stuff... causes ViZDoom to crash on some levels (boo!)
   this->game->setSectorsInfoEnabled(false);
 
   // Initialize the game. Further configuration won't take any effect from now on.
   this->game->init();
+}
+
+/**
+ * Execute a single action and step forward to the next state.
+ * @returns An std::tuple of the form <nextState:State, reward:double, epsiodeFinished:bool>
+ */
+DoomEnv::StepInfo DoomEnv::step(const DoomEnv::Action& a, size_t networkVersion) {
+  this->stepsPerformed++;
+
+  auto gameState = this->game->getState();
+  auto done = this->isEpisodeFinished();
+  auto reward = 0.0;
+  auto gameActionVec = this->actionMap[a];
+
+  // Calculate the current action and total state reward based on our reward variables
+  // NOTE: You can make a "prolonged" action and skip frames by providing the 2nd arg to makeAction
+  try {
+    //if (this->isInActivePlayMode()) {
+    //  reward += this->game->getLastReward();
+    //}
+    //else
+    this->game->makeAction(gameActionVec, this->frameSkip); // This will advance the ViZDoom game state
+  }
+  catch (...) {
+    // If the game window was closed we'll get an exception here, exit gracefully
+    std::cout << "Game window was closed. Terminating program." << std::endl;
+    exit(0);
+  }
+
+  // TODO?
+  // std::vector<ImageBufferPtr> stateBuffers;
+  // stateBuffers.reserve(this->frameSkip);
+  // for (auto i = 0; i < this->frameSkip; i++) { 
+  //  reward += this->game->makeAction(gameActionVec, 1);
+  //  auto gameState = this->game->getState();
+  //  assert(gameState != nullptr);
+  //  stateBuffers.push_back(gameState->screenBuffer);
+  // }
+  
+  if (gameState != nullptr) {
+    for (auto& varPtr : this->rewardVars) { 
+      reward += varPtr->updateAndCalculateReward(*this->game);
+    }
+  }
+  
+  // Two possible scenarios with potential reward for being done, 
+  // otherwise we just reached max stepsPerformed per Episode.
+  if (done) {
+    if (this->game->isMapEnded()) { // NOTE: isMapEnded was added to the DoomGame class manually and ViZDoom was recompiled with it!
+      std::cout << "Map Ended! Reward: " << mapEndReward << std::endl;
+      reward += mapEndReward;
+    }
+    if (this->game->isPlayerDead()) {
+      std::cout << "Agent died! Reward: " << deathReward << std::endl;
+      reward += deathReward;
+    }
+  }
+  
+  return std::make_tuple(
+    gameState == nullptr ? 
+      State::buildEmptyStateTensor(networkVersion) : 
+      State::buildStateTensor(gameState->screenBuffer, networkVersion), 
+    reward, done
+  );
 }
 
 constexpr size_t doomEpStartNum  = 1;
@@ -122,6 +194,16 @@ void DoomEnv::setRandomMap() {
   mapSS << "E" << randDoomEp << "M" << randDoomMap;
   this->setMap(mapSS.str());
 }
+
+/*
+DoomEnv::Action DoomEnv::getLastAction() const {
+  auto lastActionVec = this->game->getLastAction();
+  for (const auto& [action, actionVec] : this->actionMap) {
+    if (lastActionVec == actionVec) { return action; }
+  }
+  return Action::DoomNoAction;
+}
+*/
 
 bool DoomEnv::isEpisodeFinished() const {
   auto isTerminalState = (
@@ -184,7 +266,8 @@ void DoomEnv::initGameOptions() {
   // Turns on the sound. (turned off by default)
   //this->game->setSoundEnabled(true);
   
-  this->game->setDeathPenalty(50);
+  // NOTE: We do the penalties/reward calculation ourselves
+  //this->game->setDeathPenalty(0);
   //this->game->setLivingReward(0.01);
 
   // Makes the window appear (turned on by default)
@@ -243,15 +326,13 @@ void DoomEnv::initGameVariables() {
   this->game->addAvailableGameVariable(AMMO2);       // Amount of ammo for the pistol
 
   // Reward functions (how we calculate the reward when specific game variables change)
-  auto healthRewardFunc = [](int oldHealth, int newHealth) { return newHealth-oldHealth; };
-  auto armorRewardFunc = [](int oldArmor, int newArmor) {
-    return (newArmor > oldArmor ? 1.0 : 0.25) * (newArmor-oldArmor); // Smaller penalty for losing armor vs. health
-  };
+  auto healthRewardFunc = [](int oldHealth, int newHealth) { return 0.1 * (newHealth-oldHealth); };
+  auto armorRewardFunc = [](int oldArmor, int newArmor) { return (newArmor > oldArmor ? 1.0 : 0.0) * (newArmor-oldArmor); };
   auto itemRewardFunc = [](int oldItemCount, int newItemCount) { return newItemCount > oldItemCount ? (newItemCount-oldItemCount) : 0; };
-  auto secretsRewardFunc = [](int oldNumSecrets, int newNumSecrets) { return newNumSecrets > oldNumSecrets ? 10 : 0; };
+  auto secretsRewardFunc = [](int oldNumSecrets, int newNumSecrets) { return newNumSecrets > oldNumSecrets ? 5 : 0; };
   auto dmgRewardFunc = [](int oldDmg, int newDmg) { return newDmg > oldDmg ? 0.1*(newDmg-oldDmg) : 0; };
-  auto killCountRewardFunc = [](int oldKillCount, int newKillCount) { return newKillCount > oldKillCount ? 10 : 0; };
-  auto ammoRewardFunc = [](int oldAmmo, int newAmmo) { return (newAmmo > oldAmmo ? 1.0 : 0.5) * (newAmmo-oldAmmo); };
+  auto killCountRewardFunc = [](int oldKillCount, int newKillCount) { return newKillCount > oldKillCount ? killReward : 0; };
+  auto ammoRewardFunc = [](int oldAmmo, int newAmmo) { return (newAmmo > oldAmmo ? 1.0 : 0.1) * (newAmmo-oldAmmo); };
 
   // Setup our variable-reward mapping
   this->rewardVars = std::vector<std::shared_ptr<DoomRewardVariable>>({ 

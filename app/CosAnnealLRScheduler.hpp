@@ -17,17 +17,22 @@ class CosAnnealLRScheduler : public torch::optim::LRScheduler {
 public:
   CosAnnealLRScheduler(
     torch::optim::Optimizer& optimizer, size_t expectedStepsPerEpoch, 
-    double minLR=1e-5, double maxLR=1e-2, double lrDecay=0.999, 
+    double minLR=9e-5, double maxLR=1e-1, double lrDecay=0.999, 
     size_t cycleLength=10, double multFactor=1.5);
 
   ~CosAnnealLRScheduler() = default;
 
+  void setEnabled(bool enabled) { this->enabled = enabled; }
+
   size_t getAvgBatchesPerEpoch() { return static_cast<size_t>(this->avgBatchesPerEpoch); }
+  double getCurrLR() const { return this->currLR; }
   double calcLR() const { return this->calcLR(this->batchSinceRestart); };
 
   // For the time being, we need to call these functions (see below) manually during training.
   // libtorch doesn't currently have much support for LR Scheduling.
   void onBatchEnd(double loss) {
+    if (!this->enabled) { return; }
+
     this->batchesInLastEpoch++;
     this->lossStepCount++;
     this->batchSinceRestart++;
@@ -49,6 +54,7 @@ public:
     this->prevLoss = loss;
   };
   void onEpochEnd(size_t epochNum) {
+    if (!this->enabled) { return; }
 
     // Make sure we update the cumulative average for the number of batches per epoch first,
     // this will be used if we increase/decrease the learning rate based on the total delta loss
@@ -111,6 +117,7 @@ public:
   };
 
 private:
+  bool enabled;
   double currLR, minLR, maxLR, lrDecay, multFactor;
   size_t cycleLength;
   size_t batchSinceRestart, nextRestart;
