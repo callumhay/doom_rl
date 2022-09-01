@@ -6,12 +6,13 @@
 #include <vector>
 
 class DoomRLCmdOpts;
+class DoomGuy;
 
 class DoomRLLogger {
 public:
   DoomRLLogger(const std::string& logDir, const std::string& checkpointDir);
 
-  void logStartSession(const DoomRLCmdOpts& cmdOpts);
+  void logStartSession(const DoomRLCmdOpts& cmdOpts, const DoomGuy& guy);
   void logStep(double reward, double loss, double q,  double lr, double epsilon);
   void logEpisode(size_t episodeNum, size_t stepNum, const std::string& mapName);
 

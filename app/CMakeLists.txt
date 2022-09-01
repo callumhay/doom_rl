@@ -1,5 +1,9 @@
 # https://crascit.com/2016/01/31/enhanced-source-file-handling-with-target_sources/
 
+add_subdirectory(lr_schedulers)
+add_subdirectory(modules)
+add_subdirectory(utils)
+
 target_sources(doom_rl
   PRIVATE
     doom_rl.cpp
@@ -14,10 +18,5 @@ target_sources(doom_rl
     DoomRLCmdOpts.hpp
     DoomRLCmdOpts.cpp
     ReplayMemory.hpp
-    RNG.hpp
-    RNG.cpp
-    CosAnnealLRScheduler.hpp
-    CosAnnealLRScheduler.cpp
-    StringUtils.hpp
     debug_doom_rl.hpp
 )

@@ -17,13 +17,21 @@ public:
   double startEpsilon;
   double epsilonMin;
   double epsilonDecay;
+  
   double learningRate;
+  double minLearningRate;
+  double maxLearningRate;
+
   bool isActivePlay;
   std::string checkpointFilepath;
   std::string doomMap;
 
   DoomRLCmdOpts(int argc, char* argv[]);
   void printOpts(std::ostream& stream) const;
+
+  bool isLearningRateConstant() const {
+    return this->minLearningRate == this->learningRate && this->maxLearningRate == this->learningRate;
+  };
 
 private:
   boost::program_options::options_description desc;

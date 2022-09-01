@@ -7,18 +7,22 @@
 #include <torch/torch.h>
 #include <ATen/autocast_mode.h>
 
+class DoomGuyNet;
+
 class DoomGuyNetImpl : public torch::nn::Module {
 public:
-  static constexpr size_t version = 2;
+  static constexpr size_t version = 4;
+  static constexpr size_t minorVersion = 0;
 
-  enum class Model {
-    Online,
-    Target
-  };
+  enum class Model { Online, Target };
 
-  DoomGuyNetImpl(size_t inputChannels, size_t outputDim, size_t version=DoomGuyNetImpl::version);
+  DoomGuyNetImpl(
+    size_t inputChannels, size_t outputDim, 
+    size_t version=DoomGuyNetImpl::version, size_t minorVersion=DoomGuyNetImpl::minorVersion
+  );
 
   size_t getCurrVersion() const { return this->currVersion; }
+  size_t getCurrMinorVersion() const { return this->currMinorVersion; }
   size_t getOutputDim() const { return this->outputDim; }
 
   // Synchronize the target with the current online network
@@ -33,19 +37,21 @@ public:
     this->freezeTarget();
   };
   void freezeTarget() {
-    this->target->eval(); // The target is never training
+    this->target->eval(); // The target network is never training
     for (auto& p : this->target->parameters()) { p.set_requires_grad(false); }
   }
+
+  void shoehorn(const DoomGuyNet& otherNet);
 
   torch::Tensor forward(torch::Tensor input, Model model) {
     return model == Model::Online ? this->online->forward(input) : this->target->forward(input);
   };
 
   void train(bool on = true) override {
-    this->online->train(on); // The online network is the only thing ever trained
+    torch::nn::Module::train(on);
+    this->target->eval(); // The target network is never training
   }
 
-  //std::shared_ptr<Module> clone(const optional<Device>& device = nullopt) const override;
   void pretty_print(std::ostream& stream) const override;
 
   torch::nn::Sequential online{nullptr};
@@ -53,13 +59,15 @@ public:
 
 private:
   size_t currVersion;
+  size_t currMinorVersion;
   size_t inputChannels, outputDim;
 
-  void buildNetworks(size_t version);
-  static torch::nn::Sequential buildV0Network(size_t inputChannels, size_t outputDim);
-  static torch::nn::Sequential buildV1Network(size_t inputChannels, size_t outputDim);
-  static torch::nn::Sequential buildV2Network(size_t inputChannels, size_t outputDim);
-  static torch::nn::Sequential buildV3Network(size_t inputChannels, size_t outputDim);
+  void buildNetworks(size_t version, size_t minorVersion);
+  static torch::nn::Sequential buildV0Network(size_t inputChannels, size_t outputDim, size_t minorVersion);
+  static torch::nn::Sequential buildV1Network(size_t inputChannels, size_t outputDim, size_t minorVersion);
+  static torch::nn::Sequential buildV2Network(size_t inputChannels, size_t outputDim, size_t minorVersion);
+  static torch::nn::Sequential buildV3Network(size_t inputChannels, size_t outputDim, size_t minorVersion);
+  static torch::nn::Sequential buildV4Network(size_t inputChannels, size_t outputDim, size_t minorVersion);
 };
 
 TORCH_MODULE(DoomGuyNet);

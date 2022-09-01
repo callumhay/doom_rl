@@ -14,10 +14,15 @@ constexpr char cmdStepsSync[]     = "sync_steps";
 constexpr char cmdEpsilon[]       = "epsilon";
 constexpr char cmdEpislonMin[]    = "epsilon_min";
 constexpr char cmdEpsilonDecay[]  = "epsilon_decay";
-constexpr char cmdLearningRate[]  = "lr";
 constexpr char cmdLoadCkpt[]      = "checkpoint";
 constexpr char cmdMap[]           = "map";
-constexpr char cmdActivePlay[]    = "active_play";
+
+constexpr char cmdLearningRate[]     = "lr";
+constexpr char cmdMinLearningRate[]  = "min_lr";
+constexpr char cmdMaxLearningRate[]  = "max_lr";
+
+
+//constexpr char cmdActivePlay[]    = "active_play";
 
 constexpr size_t stepsPerEpMaxDefault = 1e5;
 constexpr size_t episodesDefault      = 1e5;
@@ -33,18 +38,20 @@ constexpr bool isActivePlayDefault    = false;
 DoomRLCmdOpts::DoomRLCmdOpts(int argc, char* argv[]): desc("Allowed options") {
   this->desc.add_options()
     (cmdHelp, "Print help/usage message.")
-    (cmdEpisodes,      po::value<size_t>(&this->numEpisodes)->default_value(episodesDefault),        "Number of episodes to run.")
-    (cmdStepsPerEpMax, po::value<size_t>(&this->stepsPerEpMax)->default_value(stepsPerEpMaxDefault), "Maximum number of steps per episode.")
-    (cmdStepsExplore,  po::value<size_t>(&this->stepsExplore)->default_value(stepsExploreDefault),   "Number of steps to explore before starting training.")
-    (cmdStepsSave,     po::value<size_t>(&this->stepsSave)->default_value(stepsSaveDefault),         "Number of steps between checkpoints (i.e., when the network model is saved to disk).")
-    (cmdStepsSync,     po::value<size_t>(&this->stepsSync)->default_value(stepsSyncDefault),         "Number of steps between when the Q-target network is synchronized with the Q-online network.")
-    (cmdEpsilon,       po::value<double>(&this->startEpsilon)->default_value(epislonDefault),        "Starting epsilon value [1,0]. This is how likely the agent is to explore (choose a random action, where 1 is always explore).")
-    (cmdEpsilonDecay,  po::value<double>(&this->epsilonDecay)->default_value(epsilonDecayDefault),   "Epsilon decay multiplier per step (multiplies the epsilon value at each step, decaying it over the course of training.")
-    (cmdLearningRate,  po::value<double>(&this->learningRate)->default_value(learningRateDefault),   "Initial learning rate for gradient descent / optimization of the model network.")
-    (cmdLoadCkpt,      po::value<std::string>(&this->checkpointFilepath)->default_value(""),         "Filepath for loading a checkpoint model file for the Q-networks.")
-    (cmdMap,           po::value<std::string>(&this->doomMap)->default_value("E1M1"),                "Doom map to train in, to cycle through maps use 'cycle', to choose random maps use 'random', to cycle through a list of maps enter a set of comma separated map names.")
-    //(cmdActivePlay,    po::bool_switch(&this->isActivePlay)->default_value(isActivePlayDefault),     "Whether the player (i.e., you) will play in place of the agent for teaching purposes.")
-    (cmdEpislonMin,    po::value<double>(&this->epsilonMin)->default_value(epsilonMinDefault),       "The minimum allowable epsilon value (used in epsilon-greedy policy) during training.")
+    (cmdEpisodes,         po::value<size_t>(&this->numEpisodes)->default_value(episodesDefault),         "Number of episodes to run.")
+    (cmdStepsPerEpMax,    po::value<size_t>(&this->stepsPerEpMax)->default_value(stepsPerEpMaxDefault),  "Maximum number of steps per episode.")
+    (cmdStepsExplore,     po::value<size_t>(&this->stepsExplore)->default_value(stepsExploreDefault),    "Number of steps to explore before starting training.")
+    (cmdStepsSave,        po::value<size_t>(&this->stepsSave)->default_value(stepsSaveDefault),          "Number of steps between checkpoints (i.e., when the network model is saved to disk).")
+    (cmdStepsSync,        po::value<size_t>(&this->stepsSync)->default_value(stepsSyncDefault),          "Number of steps between when the Q-target network is synchronized with the Q-online network.")
+    (cmdEpsilon,          po::value<double>(&this->startEpsilon)->default_value(epislonDefault),         "Starting epsilon value [1,0]. This is how likely the agent is to explore (choose a random action, where 1 is always explore).")
+    (cmdEpsilonDecay,     po::value<double>(&this->epsilonDecay)->default_value(epsilonDecayDefault),    "Epsilon decay multiplier per step (multiplies the epsilon value at each step, decaying it over the course of training.")
+    (cmdLearningRate,     po::value<double>(&this->learningRate)->default_value(learningRateDefault),    "Initial learning rate for gradient descent / optimization of the model network. Note: If the minimum and/or maximum bounds on learning rate are not set then the rate will be constant throughout training.")
+    (cmdMinLearningRate,  po::value<double>(&this->minLearningRate)->default_value(learningRateDefault), "The minimum bound on the learning rate.")
+    (cmdMaxLearningRate,  po::value<double>(&this->maxLearningRate)->default_value(learningRateDefault), "The maximum bound on the learning rate.")
+    (cmdLoadCkpt,         po::value<std::string>(&this->checkpointFilepath)->default_value(""),          "Filepath for loading a checkpoint model file for the Q-networks.")
+    (cmdMap,              po::value<std::string>(&this->doomMap)->default_value("E1M1"),                 "Doom map to train in, to cycle through maps use 'cycle', to choose random maps use 'random', to cycle through a list of maps enter a set of comma separated map names.")
+    //(cmdActivePlay,       po::bool_switch(&this->isActivePlay)->default_value(isActivePlayDefault),     "Whether the player (i.e., you) will play in place of the agent for teaching purposes.")
+    (cmdEpislonMin,       po::value<double>(&this->epsilonMin)->default_value(epsilonMinDefault),        "The minimum allowable epsilon value (used in epsilon-greedy policy) during training.")
   ;
   po::store(po::parse_command_line(argc, argv, desc), this->vm);
   po::notify(this->vm);
@@ -64,7 +71,15 @@ void DoomRLCmdOpts::printOpts(std::ostream& stream) const {
     logVarInfo("Starting epsilon set to", this->startEpsilon);
     logVarInfo("Epsilon min set to", this->epsilonMin);
     logVarInfo("Starting epsilon decay multiplier set to", this->epsilonDecay);
-    logVarInfo("Starting learning rate set to", this->learningRate);
+    logVarInfo("Current learning rate set to", this->learningRate);
+    if (this->isLearningRateConstant()) {
+      std::cout << "*** The learning rate will be constant throughout training ***" << std::endl;
+    }
+    else {
+      std::cout << "*** The learning rate will be bounded in the interval [" 
+                << std::fixed << std::setprecision(8) << this->minLearningRate << ", " << this->maxLearningRate << "] ***" << std::endl;
+    }
+
     logVarInfo("Checkpoint file set to", this->checkpointFilepath.empty() ? "<empty>" : this->checkpointFilepath);
     logVarInfo("Doom map set to", this->doomMap);
     
@@ -85,7 +100,12 @@ void DoomRLCmdOpts::checkOpts() {
   this->cmdVarCheck<double>(cmdEpsilon, this->startEpsilon, epislonDefault, "starting epsilon", 0.0, 1.0);
   this->cmdVarCheck<double>(cmdEpsilon, this->epsilonMin, epsilonMinDefault, "minimum allowable epsilon", 0.0, 1.0);
   this->cmdVarCheck<double>(cmdEpsilonDecay, this->epsilonDecay, epsilonDecayDefault, "epsilon decay multiplier", 0, 1, false, false);
-  this->cmdVarCheck<double>(cmdLearningRate, this->learningRate, learningRateDefault, "learning rate", 0, 1, true, false);
+  this->cmdVarCheck<double>(cmdLearningRate, this->learningRate, learningRateDefault, "learning rate", 0, 20, true, true);
+
+  // Make sure the learning rate bounds make sense
+  this->minLearningRate = std::min<double>(this->minLearningRate, this->learningRate);
+  this->maxLearningRate = std::max<double>(this->maxLearningRate, this->learningRate);
+
 
   if (this->vm.count(cmdLoadCkpt) && !this->checkpointFilepath.empty()) {
     // Check if the file exists...

@@ -1,7 +1,9 @@
 #include <iostream>
 #include <regex>
 
-#include "RNG.hpp"
+#include "utils/RNG.hpp"
+#include "utils/TensorUtils.hpp"
+
 #include "DoomEnv.hpp"
 
 using namespace vizdoom;
@@ -21,18 +23,15 @@ torch::Tensor DoomEnv::State::buildStateTensor(vizdoom::ImageBufferPtr screenBuf
 
   // sizes (shape) is now [1,channels,height,width], also converted channel values from [0,255] -> [0.0,1.0]
   //std::cout << preppedTensor.sizes() << std::endl;
-  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = TENSOR_INPUT_HEIGHT_WIDTH(networkVersion);
+  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = getNetInputSize(networkVersion);
   switch (networkVersion) {
     
-    case 0: case 3: {
+    case 0: {
       // Downsample the screen buffer tensor - this will make a new tensor (so we don't need to clone anything)
       // NOTE: Only dtypes for Float32, Float64 are supported by interpolate!
       preppedTensor = torch::nn::functional::interpolate(
         preppedTensor.unsqueeze(0), // Reformat the tensor to be in the form that the interpolate function expects: Batch x Channel x Height x Width
-        torch::nn::functional::InterpolateFuncOptions()
-        .size(std::vector<int64_t>({TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH}))
-        .align_corners(true)
-        .mode(torch::kBilinear)
+        torch::nn::functional::InterpolateFuncOptions().size(std::vector<int64_t>({TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH})).align_corners(true).mode(torch::kBilinear)
       ).squeeze();
       break;
     }
@@ -40,6 +39,27 @@ torch::Tensor DoomEnv::State::buildStateTensor(vizdoom::ImageBufferPtr screenBuf
     case 1: case 2:
       // No downsampling, just maintain the same size as the screen buffer.
       break;
+
+    case 3: case 4: {
+      // Take a square from the center of the downsampled screen buffer
+      using namespace torch::indexing;
+      double ratio = static_cast<double>(TENSOR_INPUT_HEIGHT)/static_cast<double>(SCREEN_BUFFER_HEIGHT);
+      auto w = static_cast<int64_t>(SCREEN_BUFFER_WIDTH*ratio);
+
+      if (ratio != 1.0) {
+        preppedTensor = torch::nn::functional::interpolate(
+          preppedTensor.unsqueeze(0), // Reformat the tensor to be in the form that the interpolate function expects: Batch x Channel x Height x Width
+          torch::nn::functional::InterpolateFuncOptions().size(std::vector<int64_t>({TENSOR_INPUT_HEIGHT, w})).align_corners(true).mode(torch::kBilinear)
+        ).squeeze();
+      }
+      
+      auto wPad = (w-TENSOR_INPUT_WIDTH)/2;
+      preppedTensor = preppedTensor.index({Slice(), Slice(), Slice(wPad, w-wPad)});
+      // Normalize the tensor
+      preppedTensor = TensorUtils::normalize(preppedTensor, {0.485,0.456,0.406}, {0.229,0.224,0.225}, true);
+      //TensorUtils::saveTensor(preppedTensor, "../data/nScreenBuf.pt");
+      break;
+    }
 
     default:
       assert(false);
@@ -51,7 +71,7 @@ torch::Tensor DoomEnv::State::buildStateTensor(vizdoom::ImageBufferPtr screenBuf
 };
 
 torch::Tensor DoomEnv::State::buildEmptyStateTensor(size_t networkVersion) {
-  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = TENSOR_INPUT_HEIGHT_WIDTH(networkVersion);
+  auto [TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH] = getNetInputSize(networkVersion);
   return torch::zeros({NUM_CHANNELS, TENSOR_INPUT_HEIGHT, TENSOR_INPUT_WIDTH});
 }
 

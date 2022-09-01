@@ -9,6 +9,7 @@
 
 #include "DoomRLLogger.hpp"
 #include "DoomRLCmdOpts.hpp"
+#include "DoomGuy.hpp"
 
 namespace fs = std::filesystem;
 
@@ -58,12 +59,13 @@ recordTime(std::time(nullptr)), hasStartedLogging(false), cumulativeReward(0) {
   this->initEpisode();
 }
 
-void DoomRLLogger::logStartSession(const DoomRLCmdOpts& cmdOpts) {
+void DoomRLLogger::logStartSession(const DoomRLCmdOpts& cmdOpts, const DoomGuy& guy) {
   auto timeStr = toTimeStr(this->recordTime);
   std::ofstream logOfs(this->logFilepath.c_str(), std::ios_base::out | std::ios_base::app);
   logOfs << std::string(totalLogWidth, '-') << std::endl;
   logOfs << "[" << timeStr << "] Appending new log..." << std::endl;
   cmdOpts.printOpts(logOfs);
+  logOfs << "Network version: " << guy.getNetworkVersion() << std::endl;
   logOfs.close();
 }
 
@@ -100,16 +102,20 @@ void DoomRLLogger::logEpisode(size_t episodeNum, size_t stepNum, const std::stri
 
   auto recordToSStream = [=](std::stringstream& ss, const std::string separator="") {
     int i = 0;
+    auto epAvgLossIsBig = std::abs(this->currEpAvgLoss) > 100;
+    auto epAvgQIsBig    = std::abs(this->currEpAvgQ) > 100;
+    auto cumlRwdIsBig   = std::abs(this->cumulativeReward) > 100000;
+    
     ss << std::fixed << std::setw(logWidths[i++]) << episodeNum << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << stepNum << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << mapName << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(4) << this->currEpAvgEpsilon << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(5) << this->currEpAvgLearningRate << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(2) << this->currEpReward << separator;
-    ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(2) << this->cumulativeReward << separator;
+    ss << (cumlRwdIsBig   ? std::scientific : std::fixed) << std::setw(logWidths[i++]) << std::setprecision(cumlRwdIsBig ? 3 : 1) << this->cumulativeReward << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(0) << static_cast<size_t>(this->currEpLength) << separator;
-    ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(5) << this->currEpAvgLoss << separator;
-    ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(5) << this->currEpAvgQ << separator;
+    ss << (epAvgLossIsBig ? std::scientific : std::fixed) << std::setw(logWidths[i++]) << std::setprecision(epAvgLossIsBig ? 1 : 5) << this->currEpAvgLoss << separator;
+    ss << (epAvgQIsBig    ? std::scientific : std::fixed) << std::setw(logWidths[i++]) << std::setprecision(epAvgQIsBig ? 1 : 5)    << this->currEpAvgQ << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << timeSinceLastRecord << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << timeStr;
     ss << std::endl;

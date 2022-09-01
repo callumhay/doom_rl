@@ -5,6 +5,8 @@
 #include <cmath>
 #include <torch/torch.h>
 
+#include "LearningRateScheduler.hpp"
+
 constexpr double PI = 3.141592653589793238462643383279502884;
 
 /**
@@ -13,7 +15,7 @@ constexpr double PI = 3.141592653589793238462643383279502884;
  * - https://www.jeremyjordan.me/nn-learning-rate/
  * - https://arxiv.org/abs/1608.03983
  */
-class CosAnnealLRScheduler : public torch::optim::LRScheduler {
+class CosAnnealLRScheduler : public LearningRateScheduler {
 public:
   CosAnnealLRScheduler(
     torch::optim::Optimizer& optimizer, size_t expectedStepsPerEpoch, 
@@ -25,7 +27,8 @@ public:
   void setEnabled(bool enabled) { this->enabled = enabled; }
 
   size_t getAvgBatchesPerEpoch() { return static_cast<size_t>(this->avgBatchesPerEpoch); }
-  double getCurrLR() const { return this->currLR; }
+
+  double getCurrentLR() const override { return this->currLR; }
   double calcLR() const { return this->calcLR(this->batchSinceRestart); };
 
   // For the time being, we need to call these functions (see below) manually during training.

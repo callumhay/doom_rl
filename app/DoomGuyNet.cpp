@@ -1,63 +1,76 @@
+#include "modules/ResidualNetwork.hpp"
+#include "modules/TimeDistributed.hpp"
+#include "modules/QNetworkLSTM.hpp"
+#include "modules/ConvNetwork.hpp"
+
+#include "DoomEnv.hpp"
 #include "DoomGuyNet.hpp"
 
-DoomGuyNetImpl::DoomGuyNetImpl(size_t inputChannels, size_t outputDim, size_t version) : 
-currVersion(version), inputChannels(inputChannels), outputDim(outputDim), online(nullptr), target(nullptr) {
-  this->buildNetworks(this->currVersion);
+
+DoomGuyNetImpl::DoomGuyNetImpl(size_t inputChannels, size_t outputDim, size_t version, size_t minorVersion) : 
+currVersion(version), currMinorVersion(minorVersion), inputChannels(inputChannels), 
+outputDim(outputDim), online(nullptr), target(nullptr) {
+  this->buildNetworks(this->currVersion, this->currMinorVersion);
 }
 
-/*
-std::shared_ptr<Module> DoomGuyNet::clone(const optional<Device>& device = nullopt) const {
-  auto cloned = std::make_shared<DoomGuyNet>(this->inputChannels, this->outputDim, this->currVersion);
-  {
-    std::stringstream stream;
-    torch::save(this->online, stream);
-    torch::load(cloned->online, stream);
-  }
-  {
-    std::stringstream stream;
-    torch::save(this->target, stream);
-    torch::load(cloned->target, stream);
-  }
+// 'Shoehorn' the network in the given 'otherNet' into this network
+void DoomGuyNetImpl::shoehorn(const DoomGuyNet& otherNet) {
+  torch::NoGradGuard no_grad;
 
-  if (device != nullopt) { cloned->to(device); }
-  return cloned;
+  auto otherParams = otherNet->online->named_parameters(true);
+  auto params = this->online->named_parameters(true);
+  auto buffers = this->online->named_buffers(true);
+
+  for (auto& val : otherParams) {
+    auto name = val.key();
+    auto* t = params.find(name);
+    if (t != nullptr) {
+      t->copy_(val.value());
+    }
+    else {
+      t = buffers.find(name);
+      if (t != nullptr) {
+        t->copy_(val.value());
+      }
+    }
+  }
+  
+  this->syncTarget();
 }
-*/
 
 void DoomGuyNetImpl::pretty_print(std::ostream& stream) const {
   stream << "Target and Online Network Architecture: " << std::endl;
   stream << this->online << std::endl;
 }
 
-void DoomGuyNetImpl::buildNetworks(size_t version) {
+void DoomGuyNetImpl::buildNetworks(size_t version, size_t minorVersion) {
   assert(version <= DoomGuyNetImpl::version); // Check for unsupported version
 
   torch::nn::Sequential onlineNet;
   torch::nn::Sequential targetNet;
   std::cout << "Building online and target networks (DoomRL agent network v" << version << ")" << std::endl;
-  std::function<torch::nn::Sequential(size_t, size_t)> buildFunc;
+  std::function<torch::nn::Sequential(size_t, size_t, size_t)> buildFunc;
   switch (DoomGuyNetImpl::version) {
     case 0: buildFunc = DoomGuyNetImpl::buildV0Network; break;
     case 1: buildFunc = DoomGuyNetImpl::buildV1Network; break;
     case 2: buildFunc = DoomGuyNetImpl::buildV2Network; break;
     case 3: buildFunc = DoomGuyNetImpl::buildV3Network; break;
+    case 4: buildFunc = DoomGuyNetImpl::buildV4Network; break;
 
     default:
       assert(false);
       return;
   }
 
-
-  this->online = this->register_module("online", buildFunc(this->inputChannels, this->outputDim));
-  this->target = this->register_module("target", buildFunc(this->inputChannels, this->outputDim));
+  this->online = this->register_module("online", buildFunc(this->inputChannels, this->outputDim, minorVersion));
+  this->target = this->register_module("target", buildFunc(this->inputChannels, this->outputDim, minorVersion));
 
   this->initNetworkParams();
   this->currVersion = version;
-
-  //this->pretty_print(std::cout);
+  this->currMinorVersion = minorVersion;
 }
 
-torch::nn::Sequential DoomGuyNetImpl::buildV0Network(size_t inputChannels, size_t outputDim) {
+torch::nn::Sequential DoomGuyNetImpl::buildV0Network(size_t inputChannels, size_t outputDim, size_t minorVersion) {
   constexpr int layer0OutChannels = 32;
   constexpr int layer1OutChannels = 64;
   constexpr int layer2OutChannels = 64;
@@ -76,7 +89,7 @@ torch::nn::Sequential DoomGuyNetImpl::buildV0Network(size_t inputChannels, size_
   });
 }
 
-torch::nn::Sequential DoomGuyNetImpl::buildV1Network(size_t inputChannels, size_t outputDim) {
+torch::nn::Sequential DoomGuyNetImpl::buildV1Network(size_t inputChannels, size_t outputDim, size_t minorVersion) {
   constexpr int conv0OutChannels = 3;
   constexpr int conv1OutChannels = 96;
   constexpr int conv2OutChannels = 256;
@@ -106,49 +119,56 @@ torch::nn::Sequential DoomGuyNetImpl::buildV1Network(size_t inputChannels, size_
   });
 }
 
-torch::nn::Sequential DoomGuyNetImpl::buildV2Network(size_t inputChannels, size_t outputDim) {
-  /*
-  constexpr int conv2d0Params[] = {256,8,1}; // output_channels, kernel, stride
-
-  using DimArr = std::array<int,3>;
-  constexpr int startDims[] = {320,200,3};
-  constexpr DimArr conv2d0OutputDims = ConvUtils::calcShapeConv2d(startDims[0], startDims[1], conv2d0Params[0], conv2d0Params[1], conv2d0Params[2]); // [313,193,256]
-  */
-
-  return torch::nn::Sequential(
+torch::nn::Sequential DoomGuyNetImpl::buildV2Network(size_t inputChannels, size_t outputDim, size_t minorVersion) {
+ return torch::nn::Sequential(
     torch::nn::Conv2d(torch::nn::Conv2dOptions(inputChannels, 256, 8).stride(4)),
-    torch::nn::ReLU(),
+    torch::nn::LeakyReLU(),
     torch::nn::Conv2d(torch::nn::Conv2dOptions(256, 256, 4).stride(3)),
-    torch::nn::ReLU(),
+    torch::nn::LeakyReLU(),
     torch::nn::Conv2d(torch::nn::Conv2dOptions(256, 256, 3).stride(2)),
-    torch::nn::ReLU(),
+    torch::nn::LeakyReLU(),
     torch::nn::Conv2d(torch::nn::Conv2dOptions(256, 128, 2).stride(1)),
-    torch::nn::ReLU(),
+    torch::nn::LeakyReLU(),
     torch::nn::Flatten(),
-    torch::nn::Dropout(),
+    torch::nn::Dropout(0),
     torch::nn::Linear(torch::nn::LinearOptions(8448, 4096)),
-    torch::nn::ReLU(),
-    torch::nn::Dropout(),
+    torch::nn::LeakyReLU(),
+    torch::nn::Dropout(0.2),
     torch::nn::Linear(torch::nn::LinearOptions(4096, 4096)),
     torch::nn::ReLU(),
-    torch::nn::Dropout(),
+    torch::nn::Dropout(0.2),
     torch::nn::Linear(torch::nn::LinearOptions(4096, outputDim))
+ );
+}
+
+torch::nn::Sequential DoomGuyNetImpl::buildV3Network(size_t inputChannels, size_t outputDim, size_t minorVersion) {
+  auto [w,h] = DoomEnv::State::getNetInputSize(3);
+  assert(w == h);
+
+  constexpr auto resNetOutSize  = 1024;
+
+  return torch::nn::Sequential(
+    // NOTE: ResNet50 uses layers {3,4,6,3}
+    // We're currently using ResNet-18 for speed
+    ResidualNetwork(ResidualNetworkImpl::Layers({2,2,2,2}), resNetOutSize, inputChannels, 64, 1, w),
+    torch::nn::LeakyReLU(torch::nn::LeakyReLUOptions().negative_slope(0.02).inplace(true)),
+    torch::nn::Dropout(0.0),
+    torch::nn::Linear(torch::nn::LinearOptions(resNetOutSize, outputDim))
   );
 }
 
-torch::nn::Sequential DoomGuyNetImpl::buildV3Network(size_t inputChannels, size_t outputDim) {
+torch::nn::Sequential DoomGuyNetImpl::buildV4Network(size_t inputChannels, size_t outputDim, size_t minorVersion) {
+  auto [w,h] = DoomEnv::State::getNetInputSize(4);
+  assert(w == h);
+
+  //constexpr auto resNetOutSize  = 1024;
+  constexpr auto lstmHidden = 128;
+
+  // NOTE: The number of parameters in a single LSTM layer is 4*(h*(h+i)+h), 
+  // where i is inputs and h is hidden size... this gets big fast!
+  auto convNet = ConvNetwork(inputChannels, h, w);
   return torch::nn::Sequential(
-    torch::nn::Conv2d(torch::nn::Conv2dOptions(inputChannels, 3, 9).stride(1)), // [w,h,c] = [152,92,3]
-    torch::nn::ReLU(),
-    torch::nn::Flatten(),
-    torch::nn::Linear(41952, 2048),
-    torch::nn::ReLU(),
-    torch::nn::Linear(2048, 4096),
-    torch::nn::ReLU(),
-    torch::nn::Linear(4096, 1024),
-    torch::nn::ReLU(),
-    torch::nn::Linear(1024, 512),
-    torch::nn::ReLU(),
-    torch::nn::Linear(512, outputDim)
+    TimeDistributed<ConvNetwork>(convNet, true),
+    QNetworkLSTM(convNet->getOutputSize(), outputDim, lstmHidden, 2, 0.2)
   );
 }

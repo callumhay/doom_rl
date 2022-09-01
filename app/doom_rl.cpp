@@ -6,15 +6,19 @@
 
 #include <torch/torch.h>
 
-#include "debug_doom_rl.hpp"
-#include "StringUtils.hpp"
+#include "utils/StringUtils.hpp"
+#include "utils/RNG.hpp"
 
-#include "RNG.hpp"
+#include "lr_schedulers/ConstantLRScheduler.hpp"
+#include "lr_schedulers/CosAnnealLRScheduler.hpp"
+
+#include "debug_doom_rl.hpp"
 #include "DoomEnv.hpp"
 #include "DoomGuy.hpp"
 #include "DoomRLLogger.hpp"
 #include "DoomRLCmdOpts.hpp"
 #include "ReplayMemory.hpp"
+
 
 constexpr size_t actionFrameSkip = 4;
 constexpr char checkptDirBasePath[] = "./checkpoints";
@@ -34,20 +38,22 @@ int main(int argc, char* argv[]) {
 
   // Setup our logger
   auto logger = std::make_unique<DoomRLLogger>(checkptDirBasePath, checkPtDirPath);
-  logger->logStartSession(*cmdOpts);
 
-  // Setup our replayMemory, agent and gym / environment
-  auto replayMemory = std::make_unique<ReplayMemory>(ReplayMemory::REPLAY_MEMORY_MAX_SIZE);
-  auto guy = std::make_unique<DoomGuy>(
-    checkPtDirPath, cmdOpts->stepsPerEpMax, cmdOpts->stepsExplore, cmdOpts->stepsSave, cmdOpts->stepsSync,
-    cmdOpts->startEpsilon, cmdOpts->epsilonMin, cmdOpts->epsilonDecay, cmdOpts->learningRate
-  );
+  // Setup agent and gym / environment, etc.
+  //auto lrScheduler  = cmdOpts->isLearningRateConstant() ? std::make_unique()
+  auto guy = std::make_unique<DoomGuy>(checkPtDirPath, cmdOpts);
   auto env = std::make_unique<DoomEnv>(cmdOpts->stepsPerEpMax, actionFrameSkip, cmdOpts->isActivePlay);
 
   // If a checkpoint file was given, load it
   if (!cmdOpts->checkpointFilepath.empty()) {
     guy->load(cmdOpts->checkpointFilepath);
   }
+  logger->logStartSession(*cmdOpts, *guy);
+
+  // Setup our replayMemory, make sure we do this AFTER loading the checkpoint!
+  auto [stateHeight,stateWidth] = DoomEnv::State::getNetInputSize(guy->getNetworkVersion());
+  auto replayMemory = std::make_unique<ReplayMemory>(stateHeight, stateWidth, DoomEnv::State::NUM_CHANNELS);
+
   // Check for cycling maps
   std::vector<std::string> cycleMaps;
   if (cmdOpts->doomMap.find(',') != std::string::npos) {
@@ -101,7 +107,7 @@ int main(int argc, char* argv[]) {
       if (replayMemory->getCacheSize() < ReplayMemory::DEFAULT_REPLAY_BATCH_SIZE+1) { continue; }
 
       // Learn - this may just exit with [-1,-1] if we're still exploring
-      auto [q, loss] = guy->learn(replayMemory, ReplayMemory::DEFAULT_REPLAY_BATCH_SIZE);
+      auto [q, loss] = guy->learn(env, replayMemory, ReplayMemory::DEFAULT_REPLAY_BATCH_SIZE);
       
       logger->logStep(reward, loss, q, guy->getLearningRate(), guy->getEpsilon()); // Log our results for the step
       

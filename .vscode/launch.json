@@ -4,12 +4,14 @@
   // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
+    
+    
     {
       "name": "Python: Current File",
       "type": "python",
       "request": "launch",
       "program": "${file}",
-      "args": ["--csv", "../build/checkpoints/2022-08-27T14-21-32/doom_rl_Sat_Aug_27_14:21:32_2022.csv"],
+      "args": ["--tensor", "../data/screenbuffer.tensor"],
       "cwd": "${workspaceFolder}/viewer",
       "console": "integratedTerminal",
       "justMyCode": true
@@ -38,7 +40,12 @@
       "type": "cppdbg",
       "request": "launch",
       "program": "${workspaceFolder}/build/doom_rl",
-      "args": ["--lr", "0.032", "--explore_steps", "10000", "--save_steps", "100000", "--map", "E1M2,E1M3,E1M4"],
+      "args": [
+        "--epsilon", "1", "--map", "E1M2", "--explore_steps", "5000", 
+        "--save_steps", "50000", 
+        "--lr", "0.01", "--min_lr", "0.001", "--max_lr", "0.1"
+        //"--checkpoint", "./checkpoints/2022-08-30T00-22-13/network_v3-0_save_1.chkpt"
+      ],
       "stopAtEntry": false,
       "cwd": "${workspaceFolder}/build",
       "environment": [],

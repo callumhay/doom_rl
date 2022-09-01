@@ -8,21 +8,26 @@
 
 #include <torch/torch.h>
 
-#include "RNG.hpp"
+#include "utils/RNG.hpp"
 
 class ReplayMemory {
 public:
   // https://acsweb.ucsd.edu/~wfedus/pdf/replay.pdf
   static constexpr size_t DEFAULT_REPLAY_BATCH_SIZE = 32;
-  static constexpr size_t REPLAY_MEMORY_MAX_SIZE    = 72000; // If this is too big we WILL run out of memory 
+  static constexpr size_t REPLAY_MEMORY_MAX_SIZE = 72000;
 
+  ReplayMemory(size_t stateWidth, size_t stateHeight, size_t stateChannels) {
+    auto numData = stateWidth*stateHeight*stateChannels+4;
+    this->capacity = std::max<size_t>(
+      REPLAY_MEMORY_MAX_SIZE, 
+      (REPLAY_MEMORY_FP_RATIO_FPS/numData) * REPLAY_MEMORY_FP_RATIO_SIZE
+    );
+    std::cout << "Replay memory capacity set to " << this->capacity << std::endl;
 
-
-  ReplayMemory(size_t capacity): capacity(capacity) {
-    this->states.reserve(capacity);
-    this->actions.reserve(capacity);
-    this->rewards.reserve(capacity);
-    this->dones.reserve(capacity);
+    this->states.reserve(this->capacity);
+    this->actions.reserve(this->capacity);
+    this->rewards.reserve(this->capacity);
+    this->dones.reserve(this->capacity);
   }
   ReplayMemory(const ReplayMemory&) = delete;
   ReplayMemory& operator=(const ReplayMemory&) = delete;
@@ -42,17 +47,16 @@ public:
   }
 
   using ReplayData = std::array<torch::Tensor, 5>;
-  using SequenceReplayData = std::array<torch::Tensor, 6>;
+  using SequenceReplayData = std::array<torch::Tensor, 5/*7*/>;
 
   // Produces an array of 5 tensors, each tensor with a shape of [batchSize, ...feature_values]
   // The 5 tensors correspond to, in order: [stateBatch, nextStateBatch, actionBatch, rewardBatch, doneBatch]
   ReplayData randomRecall(size_t batchSize) { return this->randomSamples(batchSize); }
 
-  // TODO... only need sequences of states and actions...
-  // Produces an array of 6 specialized tensors:
-  // [stateSeq, actionSeq, nextStateSeq, nextActionSeq, rewardBatch, doneBatch]
-  // The first 4 tensors are formatted such that they capture a sequence of length 'sequenceLen'
-  // The last 2 tensors are formatted similar to the randomRecall function, capturing the rewards and dones
+  // Produces an array of 5 specialized tensors:
+  // [stateSeq, nextStateSeq, actionBatch, rewardBatch, doneBatch]
+  // The first 2 tensors are formatted such that they capture a sequence of length 'sequenceLen'
+  // The last 3 tensors are formatted similar to the randomRecall function, capturing the rewards and dones
   // for the state corresponding to the end of the sequence (last state) of the stateSeq tensor
   SequenceReplayData sequenceRecall(size_t batchSize, size_t sequenceLen);
 
@@ -60,6 +64,11 @@ public:
 private:
   using TensorVec = std::vector<torch::Tensor>;
   
+  // If the capacity of the replay memory is too big we WILL run out of memory !!
+  // For 320x200x3 floating point value state size, the max number for ~65GB is 72000
+  static constexpr double REPLAY_MEMORY_FP_RATIO_FPS  = (320*200*3+4);
+  static constexpr double REPLAY_MEMORY_FP_RATIO_SIZE = 41200;
+
   size_t capacity;
 
   TensorVec states;
@@ -137,45 +146,62 @@ private:
 
 };
 
-inline SequenceReplayData ReplayMemory::sequenceRecall(size_t batchSize, size_t sequenceLen) {
+inline ReplayMemory::SequenceReplayData ReplayMemory::sequenceRecall(size_t batchSize, size_t sequenceLen) {
   assert(
     this->states.size() >= batchSize && this->actions.size() >= batchSize && 
     this->rewards.size() >= batchSize && this->dones.size() >= batchSize
   );  
-  auto rndStartIdx = RNG::getInstance()->genShuffledIndices(batchSize, this->dones.size()-sequenceLen);
-
+  auto rndStartIndices = RNG::getInstance()->genShuffledIndices(batchSize, this->dones.size()-sequenceLen);
+  
   TensorVec stateSeqBatch; stateSeqBatch.reserve(batchSize);
-  TensorVec nextStateSeqBatch; nextStateSeqBatch.reserve(batchSize);
-  TensorVec actionSeqBatch; actionSeqBatch.reserve(batchSize);
-  TensorVec nextActionSeqBatch; nextActionSeqBatch.reserve(batchSize);
+  //TensorVec nextStateSeqBatch; nextStateSeqBatch.reserve(batchSize);
+  //TensorVec actionSeqBatch; actionSeqBatch.reserve(batchSize);
+  //TensorVec nextActionSeqBatch; nextActionSeqBatch.reserve(batchSize);
 
   // Build the sequences and as we go add them to the batches
   for (auto batchIdx = 0; batchIdx < batchSize; batchIdx++) {
-    auto rndStartIdx      = rndStartIdxs[batchIdx];
-    auto rndStartIdxPlus1 = rndStartIdx+1;
+    auto rndStartIdx = rndStartIndices[batchIdx];
+    //auto rndStartIdxPlus1 = rndStartIdx+1;
 
     // Generate a sequence vector for each piece of data
-    auto stateSeqSamples      = ReplayMemory::sequenceFromVec(rndIndices, sequenceLen, this->states);
-    auto nextStateSeqSamples  = ReplayMemory::sequenceFromVec(rndIndicesPlus1, sequenceLen, this->states);
-    auto actionSeqSamples     = ReplayMemory::sequenceFromVec(rndIndices, sequenceLen, this->actions);
-    auto nextActionSeqSamples = ReplayMemory::sequenceFromVec(rndIndicesPlus1, sequenceLen, this->actions);
+    auto stateSeqSamples = ReplayMemory::sequenceFromVec(rndStartIdx, sequenceLen, this->states);
+    //auto nextStateSeqSamples  = ReplayMemory::sequenceFromVec(rndStartIdxPlus1, sequenceLen, this->states);
+    //auto actionSeqSamples     = ReplayMemory::sequenceFromVec(rndStartIdx,      sequenceLen, this->actions);
+    //auto nextActionSeqSamples = ReplayMemory::sequenceFromVec(rndStartIdxPlus1, sequenceLen, this->actions);
 
     // We need to satisfy the following tensor shape for each final batch of sequences:
     // [batch_size, sequence_length, features]
     stateSeqBatch.push_back(torch::stack(stateSeqSamples));
-    nextStateSeqBatch.push_back(torch::stack(nextStateSeqSamples));
-    actionSeqBatch.push_back(torch::stack(actionSeqSamples));
-    nextActionSeqBatch.push_back(torch::stack(nextActionSeqSamples));
+    //nextStateSeqBatch.push_back(torch::stack(nextStateSeqSamples));
+    //actionSeqBatch.push_back(torch::stack(actionSeqSamples));
+    //nextActionSeqBatch.push_back(torch::stack(nextActionSeqSamples));
   }
 
-  auto rewardSamples = ReplayMemory::sampleFromVec(rndIndices, this->rewards);
-  auto doneSamples   = ReplayMemory::sampleFromVec(rndIndices, this->dones);
+  auto rndEndIndicies = std::vector<size_t>();
+  rndEndIndicies.reserve(rndStartIndices.size());
+  std::transform(rndStartIndices.cbegin(), rndStartIndices.cend(), std::back_inserter(rndEndIndicies),
+    [sequenceLen](size_t elem) { return elem+sequenceLen-1; }
+  );
+  auto rndEndIndicesPlus1 = std::vector<size_t>();
+  rndEndIndicesPlus1.reserve(rndEndIndicies.size());
+  std::transform(rndEndIndicies.cbegin(), rndEndIndicies.cend(), std::back_inserter(rndEndIndicesPlus1),
+    [](size_t elem) { return elem+1; }
+  );
+
+  // These all need to be sampled AT THE END of the sequence - they verify the final action/reward/done after
+  // the sequence of states has been executed/exploited/explored
+  auto nextStateBatch = ReplayMemory::sampleFromVec(rndEndIndicesPlus1, this->states);
+  auto actionSamples  = ReplayMemory::sampleFromVec(rndEndIndicies, this->actions);
+  auto rewardSamples  = ReplayMemory::sampleFromVec(rndEndIndicies, this->rewards);
+  auto doneSamples    = ReplayMemory::sampleFromVec(rndEndIndicies, this->dones);
 
   return {
     torch::stack(stateSeqBatch),
-    torch::stack(nextStateSeqBatch),
-    torch::stack(actionSeqBatch),
-    torch::stack(nextActionSeqBatch),
+    torch::stack(nextStateBatch),
+    //torch::stack(nextStateSeqBatch),
+    //torch::stack(actionSeqBatch),
+    //torch::stack(nextActionSeqBatch),
+    torch::stack(actionSamples),
     torch::stack(rewardSamples),
     torch::stack(doneSamples)
   };

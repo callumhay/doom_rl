@@ -8,6 +8,7 @@
 #define DEBUG
   #include <torch/torch.h>
   #include <iostream>
+  #include <ostream>
   inline void printTensor(const torch::Tensor& t) { std::cout << t << std::endl; }
 #endif
 

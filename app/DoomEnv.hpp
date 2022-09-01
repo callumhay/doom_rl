@@ -25,10 +25,12 @@ public:
     static constexpr int SCREEN_BUFFER_WIDTH  = 320; // Original screen buffer width in pixels
     static constexpr int SCREEN_BUFFER_HEIGHT = 200; // Original screen buffer height in pixels
 
-    static std::array<int,2> TENSOR_INPUT_HEIGHT_WIDTH(size_t networkVersion) {
+    // Get the [height,width] of the network input for the given version
+    static std::array<int,2> getNetInputSize(size_t networkVersion) {
       switch (networkVersion) {
-        case 0: case 3: return {100, 160};
+        case 0: return {100, 160};
         case 1: case 2: return {SCREEN_BUFFER_HEIGHT, SCREEN_BUFFER_WIDTH};
+        case 3: case 4: return {128, 128};
         default: assert(false); break;
       }
       return {0,0};
@@ -72,6 +74,7 @@ public:
 
   size_t getStepsPerformed() const { return this->stepsPerformed; }
   size_t getMaxSteps() const { return this->maxSteps; }
+  size_t getFrameSkip() const { return this->frameSkip; }
 
   void setMap(const std::string& mapName) { this->doomMapToLoadNext = mapName; };
   void setCycledMap();

@@ -1,45 +1,51 @@
 #ifndef __DOOMGUY_HPP__
 #define __DOOMGUY_HPP__
 
+#include <assert.h>
 #include <string>
 #include <vector>
 #include <array>
+#include <memory>
+#include <cmath>
 
 #include <torch/torch.h>
 
 #include "DoomEnv.hpp"
-#include "CosAnnealLRScheduler.hpp"
 #include "DoomGuyNet.hpp"
 
 class ReplayMemory;
+class DoomRLCmdOpts;
+class LearningRateScheduler;
 
 class DoomGuy {
 public:
-  DoomGuy(const std::string& saveDir, size_t stepsPerEpisode, 
-    size_t stepsExplore, size_t stepsBetweenSaves, size_t stepsBetweenSyncs, 
-    double startEpsilon, double epsilonMin, double epsilonDecay, double learningRate);
-
+  DoomGuy(const std::string& saveDir, const std::unique_ptr<DoomRLCmdOpts>& cmdOpts);
 
   void train(bool on = true) { this->net->train(on); }
-
-  // Given a state, choose an epsilon-greedy action
-  DoomEnv::Action act(torch::Tensor state, std::unique_ptr<DoomEnv>& env); 
-
-  // Update online action value (Q) function with a batch of experiences
-  // Returns <mean_q, loss>
-  std::tuple<double, double> learn(std::unique_ptr<ReplayMemory>& replayMemory, size_t batchSize);
 
   void episodeEnded(size_t episodeNum);
 
   auto getNetworkVersion() const { return this->net->getCurrVersion(); }
   auto getCurrStep() const { return this->currStep; }
   auto getEpsilon() const { return this->epsilon; }
-  auto getLearningRate() const { return this->optimizer.param_groups()[0].options().get_lr(); }
+  auto getLearningRate() const {
+    auto optLR = this->optimizer.param_groups()[0].options().get_lr();
+    //assert(std::abs(this->lrScheduler->getCurrentLR()-optLR) < 1e-6);
+    return optLR;
+  }
 
-  std::string optimizerSaveFilepath(size_t version, size_t saveNum);
-  std::string netSaveFilepath(size_t version, size_t saveNum);
+  std::string optimizerSaveFilepath(size_t version, size_t minorVersion, size_t saveNum);
+  std::string netSaveFilepath(size_t version, size_t minorVersion, size_t saveNum);
   void save();
   void load(const std::string& chkptFilepath);
+
+  // Given a state, choose an epsilon-greedy action
+  DoomEnv::Action act(torch::Tensor state, std::unique_ptr<DoomEnv>& env); 
+
+  // Update online action value (Q) function with a batch of experiences
+  // Returns <mean_q, loss>
+  std::tuple<double, double> learn(std::unique_ptr<DoomEnv>& env, std::unique_ptr<ReplayMemory>& replayMemory, size_t batchSize);
+
 
 private:
   std::string saveDir;
@@ -61,18 +67,13 @@ private:
   
   DoomGuyNet net;
   torch::optim::Adam optimizer;
-  std::unique_ptr<CosAnnealLRScheduler> lrScheduler;
+  std::unique_ptr<LearningRateScheduler> lrScheduler;
   torch::nn::SmoothL1Loss lossFn;
 
-  void rebuildScheduler() {
-    // NOTE: an epoch is one complete pass through the training data... in RL this is pretty meaningless,
-    // to start so that it doesn't overcompensate at the start
-    auto expStepsPerEpoch = this->stepsPerEpisode/100;
-    if (this->lrScheduler != nullptr) {
-      expStepsPerEpoch = this->lrScheduler->getAvgBatchesPerEpoch();
-    }
-    this->lrScheduler = std::make_unique<CosAnnealLRScheduler>(this->optimizer, expStepsPerEpoch);
-  }
+  std::tuple<double, double> learnRandom(std::unique_ptr<ReplayMemory>& replayMemory, size_t batchSize);
+  std::tuple<double, double> learnSequence(std::unique_ptr<DoomEnv>& env, std::unique_ptr<ReplayMemory>& replayMemory, size_t batchSize);
+
+
 
   torch::Tensor tdEstimate(torch::Tensor stateBatch, torch::Tensor actionBatch);
   torch::Tensor tdTarget(torch::Tensor rewardBatch, torch::Tensor nextStateBatch, torch::Tensor doneBatch);

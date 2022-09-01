@@ -8,7 +8,7 @@ public:
   };
 
   using Conv2dOutputShape = std::array<int, 3>; // {width, height, channels}
-  static auto calcShapeConv2d(int inputWidth, int inputHeight, int outputChannels, int kernelSize, int stride, int padding=0) {
+  static Conv2dOutputShape calcShapeConv2d(int inputWidth, int inputHeight, int outputChannels, int kernelSize, int stride, int padding=0) {
     return Conv2dOutputShape({
       ConvUtils::calcShapeConv2dOneDim(inputWidth,  kernelSize, stride, padding),
       ConvUtils::calcShapeConv2dOneDim(inputHeight, kernelSize, stride, padding),

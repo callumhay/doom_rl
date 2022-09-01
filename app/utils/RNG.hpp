@@ -5,20 +5,10 @@
 #include <random>
 #include <memory>
 
-class RNG;
-using RNGPtr = std::shared_ptr<RNG>;
+#include "SingletonT.hpp"
 
-class RNG {
+class RNG : public SingletonT<RNG> {
 public:
-  ~RNG() {};
-
-  static RNGPtr getInstance() {
-     if (instance == nullptr) {
-      instance.reset(new RNG());
-    }
-    return instance;
-  }
-
   auto getRngGen() { return this->rngGen; }
 
   // Generate a random unsigned integer number in [minIncl, maxIncl]
@@ -57,15 +47,13 @@ public:
     return res;
   }
 
-
-private:
-  static RNGPtr instance;
-  std::mt19937 rngGen;
-  
   RNG() {
     std::random_device rd;
     this->rngGen = std::mt19937(rd());
   };
+
+private:
+  std::mt19937 rngGen;
 };
 
 #endif // __RNG_HPP__
