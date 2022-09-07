@@ -364,6 +364,8 @@ torch::Tensor DoomGuy::tdTarget(torch::Tensor rewardBatch, torch::Tensor nextSta
 
 torch::Scalar DoomGuy::updateQOnline(torch::Tensor tdEstimate, torch::Tensor tdTarget) {
   // NOTE: Both tdEstimate and tdTarget are tensors of size [DEFAULT_REPLAY_BATCH_SIZE, 1]
+  // tdTarget is detached from gradient calculations since we don't want to change
+  // the target network until synchronization with the online network
   auto loss = this->lossFn(tdEstimate, tdTarget);
   
   constexpr auto framesToLogDiff = 500;

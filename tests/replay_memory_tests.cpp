@@ -103,18 +103,18 @@ BOOST_AUTO_TEST_CASE(td_diff_priority_wraparound_with_done) {
   BOOST_TEST(replayMemory->currNonStateIdx == 1);
   
   // Update the replayMemory with TD diff values until everything is assigned a value
-  // Each time we check to make sure the sequence never goes across the current non-state index
   auto tdDiff = 0;
   constexpr auto BATCH_SIZE = 4;
   constexpr auto SEQ_LEN    = 2;
   // NOTE: There will always be 1 unassigned value left because the sequence length is 2 and
-  // the 0th index cannot be used since it would overlap with the currNonStateIdx
+  // the (currNonStateIdx-1)th index cannot be used since it would overlap with the currNonStateIdx
   while (replayMemory->priorityMap[ReplayMemory::UNASSIGNED_TD_DIFF].size() != 1) {
     auto [indices, seqs] = replayMemory->sequenceRecall(BATCH_SIZE, SEQ_LEN);
     auto tdDiffs = torch::zeros({BATCH_SIZE, 1});
     for (auto j = 0; j < BATCH_SIZE; j++) { tdDiffs[j][0] = tdDiff++; }
     replayMemory->updateIndexTDDiffs(indices, tdDiffs);
     
+    // Each time we check to make sure the sequence never goes across the current non-state index
     for (auto i = 1; i < BATCH_SIZE-1; i++) {
       BOOST_TEST(indices[i] != replayMemory->currNonStateIdx-1);
     }

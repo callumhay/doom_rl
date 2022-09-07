@@ -17,7 +17,6 @@ public:
     conv2dParams[4] = {conv2dParams[3][1], 512, 5, 1, 0}; // 4x4
     conv2dParams[5] = {conv2dParams[4][1], 512, 3, 1, 0}; // 2x2 -> 2048
 
-
     this->convSeq = this->register_module("conv_seq", this->convSeq);
 
     auto conv2dPipelineGenerator = [=]() {

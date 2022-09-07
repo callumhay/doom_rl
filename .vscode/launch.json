@@ -1,68 +1,84 @@
 {
-  // Use IntelliSense to learn about possible attributes.
-  // Hover to view descriptions of existing attributes.
-  // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
   "version": "0.2.0",
   "configurations": [
-    
-    
-    {
-      "name": "Python: Current File",
-      "type": "python",
-      "request": "launch",
-      "program": "${file}",
-      "args": ["--tensor", "../data/screenbuffer.tensor"],
-      "cwd": "${workspaceFolder}/viewer",
-      "console": "integratedTerminal",
-      "justMyCode": true
-    },
-    {
-      "name": "Attach to DoomRL",
-      "type": "cppdbg",
-      "request": "attach",
-      "program": "${workspaceFolder}/build/doom_rl",
-      "MIMode": "gdb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
-        },
-        {
-          "description": "Set Disassembly Flavor to Intel",
-          "text": "-gdb-set disassembly-flavor intel",
-          "ignoreFailures": true
-        }
-      ]
-    },
-    {
-      "name": "DoomRL Debug",
-      "type": "cppdbg",
-      "request": "launch",
-      "program": "${workspaceFolder}/build/doom_rl",
-      "args": [
-        "--epsilon", "1", "--map", "E1M2", "--explore_steps", "5000", 
-        "--save_steps", "50000", 
-        "--lr", "0.01", "--min_lr", "0.001", "--max_lr", "0.1"
-        //"--checkpoint", "./checkpoints/2022-08-30T00-22-13/network_v3-0_save_1.chkpt"
-      ],
-      "stopAtEntry": false,
-      "cwd": "${workspaceFolder}/build",
-      "environment": [],
-      "externalConsole": false,
-      "MIMode": "gdb",
-      "setupCommands": [
-        {
-          "description": "Enable pretty-printing for gdb",
-          "text": "-enable-pretty-printing",
-          "ignoreFailures": true
-        },
-        {
-          "description": "Set Disassembly Flavor to Intel",
-          "text": "-gdb-set disassembly-flavor intel",
-          "ignoreFailures": true
-        }
-      ]
-    }
+  {
+    "name": "Unit Tests",
+    "type": "lldb",
+    "request": "launch",
+    "program": "${workspaceFolder}/build/doom_rl_tests",
+    "args": [],
+    "cwd": "${workspaceFolder}/build"
+  },
+  {
+    "name": "Python: Current File",
+    "type": "python",
+    "request": "launch",
+    "program": "${file}",
+    "args": [
+      // "--tensor",
+      // "../data/screenbuffer.tensor"
+    ],
+    "cwd": "${workspaceFolder}/viewer",
+    "console": "integratedTerminal",
+    "justMyCode": true
+  },
+  {
+    "name": "Attach to DoomRL",
+    "type": "cppdbg",
+    "request": "attach",
+    "program": "${workspaceFolder}/build/doom_rl",
+    "MIMode": "gdb",
+    "setupCommands": [
+      {
+        "description": "Enable pretty-printing for gdb",
+        "text": "-enable-pretty-printing",
+        "ignoreFailures": true
+      },
+      {
+        "description": "Set Disassembly Flavor to Intel",
+        "text": "-gdb-set disassembly-flavor intel",
+        "ignoreFailures": true
+      }
+    ]
+  },
+  {
+    "name": "DoomRL Debug",
+    "type": "cppdbg",
+    "request": "launch",
+    "program": "${workspaceFolder}/build/doom_rl",
+    "args": [
+      "--epsilon",
+      "1",
+      "--map",
+      "E1M2",
+      "--explore_steps",
+      "5000",
+      "--save_steps",
+      "50000",
+      "--lr",
+      "0.01",
+      "--min_lr",
+      "0.001",
+      "--max_lr",
+      "0.1"
+    ],
+    "stopAtEntry": false,
+    "cwd": "${workspaceFolder}/build",
+    "environment": [],
+    "externalConsole": false,
+    "MIMode": "gdb",
+    "setupCommands": [
+      {
+        "description": "Enable pretty-printing for gdb",
+        "text": "-enable-pretty-printing",
+        "ignoreFailures": true
+      },
+      {
+        "description": "Set Disassembly Flavor to Intel",
+        "text": "-gdb-set disassembly-flavor intel",
+        "ignoreFailures": true
+      }
+    ]
+  }
   ]
 }
