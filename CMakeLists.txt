@@ -31,8 +31,9 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     "Debug" "Release" "MinSizeRel" "RelWithDebInfo")
 endif()
 
-#add_executable(vizdoom_test "")
+
 add_executable(doom_rl "")
+add_executable(doom_rl_tests "")
 
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
@@ -40,13 +41,14 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 set(Boost_USE_STATIC_LIBS OFF) 
 set(Boost_USE_MULTITHREADED ON)  
 set(Boost_USE_STATIC_RUNTIME OFF) 
-find_package(Boost REQUIRED COMPONENTS program_options) 
+find_package(Boost REQUIRED COMPONENTS program_options unit_test_framework serialization) 
 
 #message(STATUS "Torch libraries: ${TORCH_LIBRARIES}")
 #find_package(TorchVision REQUIRED)
 
 add_subdirectory(extern/ViZDoom)
 add_subdirectory(app)
+add_subdirectory(tests)
 
 #set_target_properties(vizdoom_test PROPERTIES LINK_DEPENDS_NO_SHARED true)
 #target_include_directories(vizdoom_test PRIVATE extern/ViZDoom/include ${ARMADILLO_INCLUDE_DIR} ${MLPACK_INCLUDE_DIRS})
@@ -54,3 +56,6 @@ add_subdirectory(app)
 
 target_include_directories(doom_rl PRIVATE extern/ViZDoom/include ${Torch_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
 target_link_libraries(doom_rl PRIVATE ${TORCH_LIBRARIES} ${Boost_LIBRARIES} libvizdoom_static)
+
+target_include_directories(doom_rl_tests PRIVATE ${Torch_INCLUDE_DIRS} ${Boost_INCLUDE_DIRS})
+target_link_libraries(doom_rl_tests PRIVATE ${TORCH_LIBRARIES} ${Boost_LIBRARIES})

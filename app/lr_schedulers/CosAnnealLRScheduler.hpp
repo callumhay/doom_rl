@@ -33,7 +33,7 @@ public:
 
   // For the time being, we need to call these functions (see below) manually during training.
   // libtorch doesn't currently have much support for LR Scheduling.
-  void onBatchEnd(double loss) {
+  void onBatchEnd(double loss) override {
     if (!this->enabled) { return; }
 
     this->batchesInLastEpoch++;
@@ -56,7 +56,7 @@ public:
     this->currLR = this->calcLR();
     this->prevLoss = loss;
   };
-  void onEpochEnd(size_t epochNum) {
+  void onEpochEnd(size_t epochNum) override {
     if (!this->enabled) { return; }
 
     // Make sure we update the cumulative average for the number of batches per epoch first,

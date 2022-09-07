@@ -4,6 +4,10 @@
 #include <exception>
 #include <vector>
 #include <ostream>
+#include <sstream>
+
+#include <boost/serialization/split_free.hpp>
+#include <boost/serialization/string.hpp>
 
 #include <torch/torch.h>
 
@@ -54,5 +58,28 @@ inline torch::Tensor TensorUtils::normalize(
 
   return result.sub_(tMean).div_(tStd);  
 }
+
+BOOST_SERIALIZATION_SPLIT_FREE(at::Tensor)
+namespace boost {
+namespace serialization {
+
+template<class Archive>
+void save(Archive& ar, const at::Tensor& t, unsigned int version) {
+  std::stringstream ss;
+  torch::save(t, ss);
+  ar & ss.str();
+}
+template<class Archive>
+void load(Archive& ar, at::Tensor& t, unsigned int version) {
+  std::stringstream ss;
+  std::string s;
+  ar & s;
+  ss.str(s);
+  torch::load(t, ss);
+}
+
+} // namespace serialization
+} // namespace boost
+
 
 #endif // __TENSORUTILS_HPP__

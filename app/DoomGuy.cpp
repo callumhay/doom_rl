@@ -245,7 +245,8 @@ std::tuple<double, double> DoomGuy::learn(std::unique_ptr<DoomEnv>& env, std::un
 
 std::tuple<double, double> DoomGuy::learnRandom(std::unique_ptr<ReplayMemory>& replayMemory, size_t batchSize) {
   // Sample randomly from memory
-  auto [stateBatch, nextStateBatch, actionBatch, rewardBatch, doneBatch] = replayMemory->randomRecall(batchSize);
+  auto [indices, batches] = replayMemory->randomRecall(batchSize);
+  auto [stateBatch, nextStateBatch, actionBatch, rewardBatch, doneBatch] = batches;
   if (this->useCuda) {
     stateBatch = stateBatch.cuda();
     nextStateBatch = nextStateBatch.cuda();
@@ -278,6 +279,7 @@ std::tuple<double, double> DoomGuy::learnRandom(std::unique_ptr<ReplayMemory>& r
   auto lossScalar = loss.toDouble();
 
   this->lrScheduler->onBatchEnd(lossScalar);
+  replayMemory->updateIndexTDDiffs(indices, torch::abs(tdEst-tdTgt));
 
   return std::make_tuple(tdEst.mean().item<double>(), lossScalar);
 }
@@ -291,7 +293,8 @@ std::tuple<double, double> DoomGuy::learnSequence(
 
   // Sample random sets of sequences from memory and their resulting action/reward/done 
   // values at the end of those sequences.
-  auto [stateSeqBatch, nextStateBatch, actionBatch, rewardBatch, doneBatch] = replayMemory->sequenceRecall(batchSize, sequenceLength);
+  auto [indices, batches] = replayMemory->sequenceRecall(batchSize, sequenceLength);
+  auto [stateSeqBatch, nextStateBatch, actionBatch, rewardBatch, doneBatch] = batches;
   if (this->useCuda) {
     stateSeqBatch = stateSeqBatch.cuda();
     nextStateBatch = nextStateBatch.cuda().unsqueeze(1);
@@ -324,6 +327,7 @@ std::tuple<double, double> DoomGuy::learnSequence(
   auto lossScalar = loss.toDouble();
 
   this->lrScheduler->onBatchEnd(lossScalar);
+  replayMemory->updateIndexTDDiffs(indices, torch::abs(tdEst-tdTgt));
 
   return std::make_tuple(tdEst.mean().item<double>(), lossScalar);
 }
