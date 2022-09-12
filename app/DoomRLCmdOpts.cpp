@@ -21,6 +21,7 @@ constexpr char cmdLearningRate[]     = "lr";
 constexpr char cmdMinLearningRate[]  = "min_lr";
 constexpr char cmdMaxLearningRate[]  = "max_lr";
 
+constexpr char cmdIsExecTesting[]    = "training_off";
 
 //constexpr char cmdActivePlay[]    = "active_play";
 
@@ -39,7 +40,6 @@ DoomRLCmdOpts::DoomRLCmdOpts(int argc, char* argv[]): desc("Allowed options") {
   this->desc.add_options()
     (cmdHelp, "Print help/usage message.")
     (cmdEpisodes,         po::value<size_t>(&this->numEpisodes)->default_value(episodesDefault),         "Number of episodes to run.")
-    (cmdStepsPerEpMax,    po::value<size_t>(&this->stepsPerEpMax)->default_value(stepsPerEpMaxDefault),  "Maximum number of steps per episode.")
     (cmdStepsExplore,     po::value<size_t>(&this->stepsExplore)->default_value(stepsExploreDefault),    "Number of steps to explore before starting training.")
     (cmdStepsSave,        po::value<size_t>(&this->stepsSave)->default_value(stepsSaveDefault),          "Number of steps between checkpoints (i.e., when the network model is saved to disk).")
     (cmdStepsSync,        po::value<size_t>(&this->stepsSync)->default_value(stepsSyncDefault),          "Number of steps between when the Q-target network is synchronized with the Q-online network.")
@@ -52,6 +52,7 @@ DoomRLCmdOpts::DoomRLCmdOpts(int argc, char* argv[]): desc("Allowed options") {
     (cmdMap,              po::value<std::string>(&this->doomMap)->default_value("E1M1"),                 "Doom map to train in, to cycle through maps use 'cycle', to choose random maps use 'random', to cycle through a list of maps enter a set of comma separated map names.")
     //(cmdActivePlay,       po::bool_switch(&this->isActivePlay)->default_value(isActivePlayDefault),     "Whether the player (i.e., you) will play in place of the agent for teaching purposes.")
     (cmdEpislonMin,       po::value<double>(&this->epsilonMin)->default_value(epsilonMinDefault),        "The minimum allowable epsilon value (used in epsilon-greedy policy) during training.")
+    (cmdIsExecTesting,    po::bool_switch(&this->isExecTesting)->default_value(false),                       "If this flag is provided then training will be turned off and the agent will play Doom.")
   ;
   po::store(po::parse_command_line(argc, argv, desc), this->vm);
   po::notify(this->vm);
@@ -63,27 +64,28 @@ void DoomRLCmdOpts::printOpts(std::ostream& stream) const {
     auto logVarInfo = [&stream](const auto& preamble, auto value) {
       stream << std::left << std::setw(40) << preamble << " " << value << std::endl;
     };
-    logVarInfo("Number of episodes set to", this->numEpisodes);
-    logVarInfo("Maximum steps per episode set to", this->stepsPerEpMax);
-    logVarInfo("Exploration steps set to", this->stepsExplore);
-    logVarInfo("Steps between saves set to", this->stepsSave);
-    logVarInfo("Steps between network sync set to", this->stepsSync);
-    logVarInfo("Starting epsilon set to", this->startEpsilon);
-    logVarInfo("Epsilon min set to", this->epsilonMin);
-    logVarInfo("Starting epsilon decay multiplier set to", this->epsilonDecay);
-    logVarInfo("Current learning rate set to", this->learningRate);
-    if (this->isLearningRateConstant()) {
-      std::cout << "*** The learning rate will be constant throughout training ***" << std::endl;
+    if (this->isExecTesting) {
+      stream << "Training turned off, agent will just be playing Doom." << std::endl;
     }
     else {
-      std::cout << "*** The learning rate will be bounded in the interval [" 
-                << std::fixed << std::setprecision(8) << this->minLearningRate << ", " << this->maxLearningRate << "] ***" << std::endl;
+      logVarInfo("Number of episodes set to", this->numEpisodes);
+      logVarInfo("Exploration steps set to", this->stepsExplore);
+      logVarInfo("Steps between saves set to", this->stepsSave);
+      logVarInfo("Steps between network sync set to", this->stepsSync);
+      logVarInfo("Starting epsilon set to", this->startEpsilon);
+      logVarInfo("Epsilon min set to", this->epsilonMin);
+      logVarInfo("Starting epsilon decay multiplier set to", this->epsilonDecay);
+      logVarInfo("Current learning rate set to", this->learningRate);
+      if (this->isLearningRateConstant()) {
+        std::cout << "*** The learning rate will be constant throughout training ***" << std::endl;
+      }
+      else {
+        std::cout << "*** The learning rate will be bounded in the interval [" 
+                  << std::fixed << std::setprecision(8) << this->minLearningRate << ", " << this->maxLearningRate << "] ***" << std::endl;
+      }
     }
-
     logVarInfo("Checkpoint file set to", this->checkpointFilepath.empty() ? "<empty>" : this->checkpointFilepath);
     logVarInfo("Doom map set to", this->doomMap);
-    
-    //logVarInfo("Active play mode set?", this->isActivePlay);
 }
 
 void DoomRLCmdOpts::checkOpts() {
@@ -93,7 +95,6 @@ void DoomRLCmdOpts::checkOpts() {
   }
 
   this->cmdVarCheck<size_t>(cmdEpisodes, this->numEpisodes, episodesDefault, "number of episodes", 1, std::numeric_limits<size_t>::max());
-  this->cmdVarCheck<size_t>(cmdStepsPerEpMax, this->stepsPerEpMax, stepsPerEpMaxDefault, "steps per episode", 500, std::numeric_limits<size_t>::max());
   this->cmdVarCheck<size_t>(cmdStepsExplore, this->stepsExplore, stepsExploreDefault, "exploration steps", 32, std::numeric_limits<size_t>::max());
   this->cmdVarCheck<size_t>(cmdStepsSave, this->stepsSave, stepsSaveDefault, "save steps (steps between checkpoints)", 1000, std::numeric_limits<size_t>::max());
   this->cmdVarCheck<size_t>(cmdStepsSync, this->stepsSync, stepsSyncDefault, "steps between synchronization between Q-target and Q-online networks", 1e2, 1e4);
@@ -106,7 +107,6 @@ void DoomRLCmdOpts::checkOpts() {
   this->minLearningRate = std::min<double>(this->minLearningRate, this->learningRate);
   this->maxLearningRate = std::max<double>(this->maxLearningRate, this->learningRate);
 
-
   if (this->vm.count(cmdLoadCkpt) && !this->checkpointFilepath.empty()) {
     // Check if the file exists...
     if (!std::filesystem::exists(this->checkpointFilepath)) {
@@ -114,8 +114,7 @@ void DoomRLCmdOpts::checkOpts() {
       this->checkpointFilepath = "";
     }
   }
-  // In active play mode there is no exploration
-  if (this->isActivePlay) { this->stepsExplore = 0; }
+  if (this->isExecTesting) { this->startEpsilon = 0; }
 }
 
 template <typename T> 

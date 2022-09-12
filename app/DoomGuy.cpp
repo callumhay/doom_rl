@@ -2,8 +2,13 @@
 #include <algorithm>
 #include <iostream>
 #include <sstream>
+#include <ostream>
+#include <istream>
 #include <filesystem>
 #include <regex>
+
+#include <boost/archive/text_oarchive.hpp>
+#include <boost/archive/text_iarchive.hpp>
 
 #include "utils/RNG.hpp"
 
@@ -21,8 +26,7 @@ using State  = DoomEnv::State;
 using Action = DoomEnv::Action;
 
 DoomGuy::DoomGuy(const std::string& saveDir, const std::unique_ptr<DoomRLCmdOpts>& cmdOpts):
-saveDir(saveDir), saveNumber(0), currStep(0), 
-stepsPerEpisode(cmdOpts->stepsPerEpMax), stepsBetweenLearning(4),
+saveDir(saveDir), saveNumber(0), currStep(0), stepsBetweenLearning(4),
 stepsBetweenSaves(cmdOpts->stepsSave), stepsBetweenSyncs(cmdOpts->stepsSync), stepsExplore(cmdOpts->stepsExplore),
 epsilon(cmdOpts->startEpsilon), epsilonDecayMultiplier(cmdOpts->epsilonDecay), epsilonMin(cmdOpts->epsilonMin),
 useCuda(torch::cuda::is_available()), gamma(0.95), lrScheduler(nullptr), 
@@ -41,7 +45,7 @@ optimizer(net->parameters(), torch::optim::AdamOptions(cmdOpts->learningRate)) {
   else {
     // NOTE: an epoch is one complete pass through the training data... in RL this is pretty meaningless,
     // to start so that it doesn't overcompensate at the start
-    this->lrScheduler = std::make_unique<CosAnnealLRScheduler>(this->optimizer, this->stepsPerEpisode/100, cmdOpts->minLearningRate, cmdOpts->maxLearningRate);
+    this->lrScheduler = std::make_unique<CosAnnealLRScheduler>(this->optimizer, 1000, cmdOpts->minLearningRate, cmdOpts->maxLearningRate);
   }
 }
 
@@ -62,7 +66,13 @@ std::string DoomGuy::netSaveFilepath(size_t version, size_t minorVersion, size_t
   return netSavePath.str();
 }
 
-void DoomGuy::save() {
+std::string DoomGuy::replayMemSaveFilepath() const {
+  std::stringstream ss;
+  ss << this->saveDir << "/replay_memory.chkpt";
+  return ss.str();
+}
+
+void DoomGuy::save(const ReplayMemory& replayMemory) {
   fs::create_directories(this->saveDir); // Make sure the save path exists
 
   this->saveNumber++;
@@ -78,9 +88,19 @@ void DoomGuy::save() {
   auto optimSavePath = this->optimizerSaveFilepath(majorVer, minorVer, this->saveNumber);
   torch::save(this->optimizer, optimSavePath);
 
+  /*
+  auto replayMemSavePath = this->replayMemSaveFilepath();
+  {
+    std::ofstream ofs(replayMemSavePath);
+    boost::archive::text_oarchive oa(ofs);
+    oa << replayMemory;
+  }
+  */
+  
   std::cout << "[Step " << this->currStep << "]:" << std::endl
-            << "\tDoomGuyNet saved to " << netSavePath << std::endl
-            << "\tOptimizer saved to  " << optimSavePath << std::endl;
+            << "\tDoomGuyNet saved to   " << netSavePath << std::endl
+            << "\tOptimizer saved to    " << optimSavePath << std::endl;
+            //<< "\tReplayMemory saved to " << replayMemSavePath << std::endl;
 }
 
 void DoomGuy::load(const std::string& chkptFilepath) {
@@ -166,6 +186,24 @@ void DoomGuy::load(const std::string& chkptFilepath) {
   if (this->useCuda) { this->net->to(torch::kCUDA); }
 }
 
+void DoomGuy::load(const std::string& chkptFilepath, ReplayMemory& replayMemory) {
+  std::regex numRe("(.*)network_.*");
+  std::smatch numMatches;
+  if (std::regex_search(chkptFilepath, numMatches, numRe)) {
+    auto path = numMatches[1].str();
+    auto replayMemFilepath = path + "replay_memory.chkpt";
+    if (std::filesystem::exists(replayMemFilepath)) {
+      std::cout << "Loading replay memory (this may take a while!)..." << std::endl;
+      std::ifstream ifs(replayMemFilepath);
+      boost::archive::text_iarchive ia(ifs);
+      ia >> replayMemory;
+    }
+    else {
+      std::cout << "No replay memory file found (" << replayMemFilepath << ")" << std::endl;
+    }
+  }
+}
+
 /**
  * Given a state, choose an epsilon-greedy action and update value of step.
  */
@@ -228,7 +266,7 @@ std::tuple<double, double> DoomGuy::learn(std::unique_ptr<DoomEnv>& env, std::un
     this->net->syncTarget(); // Current online network get loaded into the target network
   }
   if (this->currStep % this->stepsBetweenSaves == 0) {
-    this->save(); // Save the agent network to disk
+    this->save(*replayMemory); // Save the agent network to disk
   }
   if (this->currStep < this->stepsExplore || this->currStep % this->stepsBetweenLearning != 0) {
     return std::make_tuple(-1.0,-1.0);

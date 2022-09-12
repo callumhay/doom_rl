@@ -25,7 +25,7 @@ public:
   ReplayMemory(size_t capacity): currStateIdx(0), currNonStateIdx(0) { this->initCapacity(capacity); }
   ReplayMemory(size_t stateWidth, size_t stateHeight, size_t stateChannels): 
     ReplayMemory(std::max<size_t>(
-      REPLAY_MEMORY_MIN_SIZE, (REPLAY_MEMORY_FP_RATIO_FPS/(stateWidth*stateHeight*stateChannels)) * REPLAY_MEMORY_FP_RATIO_SIZE
+      REPLAY_MEMORY_MIN_SIZE, (REPLAY_MEMORY_FP_RATIO_FPS/(stateWidth*stateHeight*stateChannels+6)) * REPLAY_MEMORY_FP_RATIO_SIZE
     )
   ){};
 
@@ -60,8 +60,8 @@ private:
   using TensorVec = std::vector<torch::Tensor>;
   
   // If the capacity of the replay memory is too big we WILL run out of memory !!
-  static constexpr double REPLAY_MEMORY_FP_RATIO_FPS  = (320*200*3);
-  static constexpr double REPLAY_MEMORY_FP_RATIO_SIZE = 40000;
+  static constexpr double REPLAY_MEMORY_FP_RATIO_FPS  = (320*200*3 + 6);
+  static constexpr double REPLAY_MEMORY_FP_RATIO_SIZE = 35000;
   static constexpr size_t REPLAY_MEMORY_MIN_SIZE      = 70000;
 
   // Key where not-yet assigned TD Difference values are stored in the priority map
@@ -133,16 +133,28 @@ private:
       auto reachedCapacityAndNoIdxOverlaps = reachedCapacity &&
         !((elemIdx < this->currNonStateIdx || elemIdx > wrapAroundEndIdx) && wrapAroundEndIdx >= this->currNonStateIdx);
       // If we haven't reached capacity make sure that we aren't sequencing from past the end of the buffers
-      auto notReachedCapacityAndNoOverflow = !reachedCapacity && elemIdx+sequenceLen-1 < this->dones.size();
+      // Since we need to grab the next state after the sequence, it will be the limiting consideration
+      auto notReachedCapacityAndNoOverflow = !reachedCapacity && elemIdx+sequenceLen < this->states.size();
 
       return reachedCapacityAndNoIdxOverlaps || notReachedCapacityAndNoOverflow;
     };
+    auto elementIdxIsContiguous = [this, sequenceLen](auto elemIdx) {
+      // Special case to test for: If the sequence contains a 'done' (i.e., an index of the done buffer is true)
+      // within the sequence, then we don't use it
+      for (auto i = 0; i < sequenceLen; i++) {
+        auto idx = (elemIdx+i) % this->capacity;
+        auto doneVal = this->dones[idx][0].item().toInt();
+        if (doneVal == 1) { return false; }
+      }
+      return true;
+    };
 
-    const auto& unassignedSet = this->priorityMap[UNASSIGNED_TD_DIFF];
+    const auto unassignedMapIter = this->priorityMap.find(UNASSIGNED_TD_DIFF);
+    const auto& unassignedSet = unassignedMapIter->second;
     for (auto iter = unassignedSet.cbegin(); numUnassigned > 0 && iter != unassignedSet.cend(); iter++) {
       auto elemIdx = *iter;
       // Make sure we take an index that can support the sequenceLen without breaking the sequence or going out of bounds
-      if (elementIdxIsValid(elemIdx)) {
+      if (elementIdxIsValid(elemIdx) && elementIdxIsContiguous(elemIdx)) {
         rndIndices.push_back(elemIdx);
         numUnassigned--;
       }
@@ -155,7 +167,7 @@ private:
       for (auto setIter = set.cbegin(); numAssigned > 0 && setIter != set.cend(); setIter++) {
         auto elemIdx = *setIter;
         // Make sure we take an index that can support the sequenceLen without breaking the sequence or going out of bounds
-        if (elementIdxIsValid(elemIdx)) {
+        if (elementIdxIsValid(elemIdx) && elementIdxIsContiguous(elemIdx)) {
           rndIndices.push_back(elemIdx);
           numAssigned--;
         }
@@ -263,7 +275,6 @@ inline void ReplayMemory::cache(torch::Tensor nextState, int action, double rewa
   if (this->dones.size() == this->capacity) {
     auto iter = this->priorityMap.find(this->tdDiffs[this->currNonStateIdx]);
     assert(iter != this->priorityMap.cend());
-    assert(iter->second.count(this->currNonStateIdx) == 1);
     iter->second.erase(this->currNonStateIdx);
 
     this->actions[this->currNonStateIdx] = torch::tensor({action});
@@ -349,10 +360,14 @@ inline void ReplayMemory::updateIndexTDDiffs(const std::vector<size_t>& indices,
     if (tdDiff == prevTDDiff) { continue; }
 
     // Remove the previous value from the priority map
-    assert(this->priorityMap.find(prevTDDiff) != this->priorityMap.cend() && this->priorityMap[prevTDDiff].count(idx) == 1);
-    this->priorityMap[prevTDDiff].erase(idx);
-    if (this->priorityMap[prevTDDiff].size() == 0) { this->priorityMap.erase(prevTDDiff); }
-    
+    auto prevIter = this->priorityMap.find(prevTDDiff);
+    if (prevIter != this->priorityMap.cend()) {
+      prevIter->second.erase(idx);
+      if (prevIter->second.size() == 0) {
+        this->priorityMap.erase(prevIter);
+      }
+    }
+
     // Update the priority map and TD Difference values with the new one
     auto findIter = this->priorityMap.find(tdDiff);
     if (findIter == this->priorityMap.cend()) {

@@ -26,9 +26,17 @@ if __name__ == "__main__":
     parser.print_usage()
     exit()
 
-  model = torch.jit.load(args.checkpoint)
-  state_dict = model.state_dict()
-  weightKeys = [ k for k in state_dict.keys() if k.find('online') != -1 and k.find('.weight') != -1 and k.find('running') == -1 and k.find('num_batches') ]
+  model = None
+  state_dict = None
+  weightKeys = None
+  try:
+    model = torch.jit.load(args.checkpoint)
+    state_dict = model.state_dict()
+    weightKeys = [ k for k in state_dict.keys() if k.find('online') != -1 and k.find('.weight') != -1 and k.find('running') == -1 and k.find('num_batches') ]
+  except (RuntimeError):
+    state_dict = torch.load(args.checkpoint)
+    weightKeys = [ k for k in state_dict.keys() if k.find('.weight') != -1 and k.find('conv') != -1 ]
+  
   #biasKeys   = [ k for k in state_dict.keys() if k.find('.bias')   != -1 and k.find('conv2d') != -1 ]
 
   for w_key in weightKeys:

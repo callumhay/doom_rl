@@ -23,6 +23,33 @@
 constexpr size_t actionFrameSkip = 4;
 constexpr char checkptDirBasePath[] = "./checkpoints";
 
+std::vector<std::string> cycleMaps;
+
+using DoomRLCmdOptsPtr = std::unique_ptr<DoomRLCmdOpts>;
+using DoomGuyPtr = std::unique_ptr<DoomGuy>;
+using DoomEnvPtr = std::unique_ptr<DoomEnv>;
+using DoomRLLoggerPtr = std::unique_ptr<DoomRLLogger>;
+
+void train(DoomRLCmdOptsPtr& cmdOpts, DoomRLLoggerPtr& logger, DoomGuyPtr& guy, DoomEnvPtr& env);
+void play(DoomRLCmdOptsPtr& cmdOpts, DoomRLLoggerPtr& logger, DoomGuyPtr& guy, DoomEnvPtr& env);
+
+void updateEnvMap(DoomEnvPtr& env, const DoomRLCmdOptsPtr& cmdOpts, size_t epIdx) {
+  if (cmdOpts->doomMap.compare(DoomRLCmdOpts::doomMapCycle) == 0) {
+    if (epIdx != 0) { env->setCycledMap(); }
+  }
+  else if (cmdOpts->doomMap.compare(DoomRLCmdOpts::doomMapRandom) == 0) {
+    env->setRandomMap();
+  }
+  else if (cycleMaps.size() > 0) {
+    static auto currCycleMapIdx = 0;
+    env->setMap(cycleMaps[currCycleMapIdx]);
+    currCycleMapIdx = (currCycleMapIdx+1) % cycleMaps.size();
+  }
+  else {
+    env->setMap(cmdOpts->doomMap);
+  }
+};
+
 int main(int argc, char* argv[]) {
   auto cmdOpts = std::make_unique<DoomRLCmdOpts>(argc, argv);
   cmdOpts->printOpts(std::cout);
@@ -40,26 +67,54 @@ int main(int argc, char* argv[]) {
   auto logger = std::make_unique<DoomRLLogger>(checkptDirBasePath, checkPtDirPath);
 
   // Setup agent and gym / environment, etc.
-  //auto lrScheduler  = cmdOpts->isLearningRateConstant() ? std::make_unique()
   auto guy = std::make_unique<DoomGuy>(checkPtDirPath, cmdOpts);
-  auto env = std::make_unique<DoomEnv>(cmdOpts->stepsPerEpMax, actionFrameSkip, cmdOpts->isActivePlay);
+  auto env = std::make_unique<DoomEnv>(actionFrameSkip);
 
   // If a checkpoint file was given, load it
   if (!cmdOpts->checkpointFilepath.empty()) {
     guy->load(cmdOpts->checkpointFilepath);
   }
+
+  // Check for cycling maps
+  
+  if (cmdOpts->doomMap.find(',') != std::string::npos) {
+    cycleMaps = StringUtils::split(cmdOpts->doomMap, ',');
+  }
+
+  if (cmdOpts->isExecTesting) { play(cmdOpts, logger, guy, env); }
+  else { train(cmdOpts, logger, guy, env); }
+
+  return 0;
+}
+
+void play(DoomRLCmdOptsPtr& cmdOpts, DoomRLLoggerPtr& logger, DoomGuyPtr& guy, DoomEnvPtr& env) {
+  guy->train(false);
+  const auto networkVersion = guy->getNetworkVersion();
+
+  for (auto e = 0; e < cmdOpts->numEpisodes; e++) {
+    const auto currEpNum = e+1;
+    updateEnvMap(env, cmdOpts, e);
+
+    auto state = env->reset(networkVersion);
+    while (true) {
+      auto action = guy->act(state, env);
+      auto [nextState, reward, done] = env->step(action, networkVersion);
+      if (done) { break; }
+      state = std::move(nextState);
+    }
+  }
+}
+
+void train(DoomRLCmdOptsPtr& cmdOpts, DoomRLLoggerPtr& logger, DoomGuyPtr& guy, DoomEnvPtr& env) {
   logger->logStartSession(*cmdOpts, *guy);
 
   // Setup our replayMemory, make sure we do this AFTER loading the checkpoint!
   auto [stateHeight,stateWidth] = DoomEnv::State::getNetInputSize(guy->getNetworkVersion());
   auto replayMemory = std::make_unique<ReplayMemory>(stateHeight, stateWidth, DoomEnv::State::NUM_CHANNELS);
-
-  // Check for cycling maps
-  std::vector<std::string> cycleMaps;
-  if (cmdOpts->doomMap.find(',') != std::string::npos) {
-    cycleMaps = StringUtils::split(cmdOpts->doomMap, ',');
+  // If there was a checkpoint then we should also check for a saved replay memory file
+  if (!cmdOpts->checkpointFilepath.empty()) {
+    guy->load(cmdOpts->checkpointFilepath, *replayMemory);
   }
-
   guy->train(true);
 
   auto prevTime = std::chrono::steady_clock::now();
@@ -68,28 +123,11 @@ int main(int argc, char* argv[]) {
   for (auto e = 0; e < cmdOpts->numEpisodes; e++) {
     const auto currEpNum = e+1;
 
-    auto updateEnvMap = [&env, &cmdOpts, cycleMaps, e]() {
-      if (cmdOpts->doomMap.compare(DoomRLCmdOpts::doomMapCycle) == 0) {
-        if (e != 0) { env->setCycledMap(); }
-      }
-      else if (cmdOpts->doomMap.compare(DoomRLCmdOpts::doomMapRandom) == 0) {
-        env->setRandomMap();
-      }
-      else if (cycleMaps.size() > 0) {
-        static auto currCycleMapIdx = 0;
-        env->setMap(cycleMaps[currCycleMapIdx]);
-        currCycleMapIdx = (currCycleMapIdx+1) % cycleMaps.size();
-      }
-      else {
-        env->setMap(cmdOpts->doomMap);
-      }
-    };
-    
     std::cout << "Starting episode #" << currEpNum << "..." << std::endl;
 
     // Time to play Doom!
     // Set the map, reset the environment and get the initial state
-    updateEnvMap();
+    updateEnvMap(env, cmdOpts, e);
     
     const auto networkVersion = guy->getNetworkVersion();
     auto state = env->reset(networkVersion);
@@ -129,6 +167,5 @@ int main(int argc, char* argv[]) {
     logger->logEpisode(currEpNum, guy->getCurrStep(), env->getMapToLoadNext());
     guy->episodeEnded(currEpNum);
   }
-
-  return 0;
 }
+

@@ -114,8 +114,8 @@ void DoomRLLogger::logEpisode(size_t episodeNum, size_t stepNum, const std::stri
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(2) << this->currEpReward << separator;
     ss << (cumlRwdIsBig   ? std::scientific : std::fixed) << std::setw(logWidths[i++]) << std::setprecision(cumlRwdIsBig ? 3 : 1) << this->cumulativeReward << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << std::setprecision(0) << static_cast<size_t>(this->currEpLength) << separator;
-    ss << (epAvgLossIsBig ? std::scientific : std::fixed) << std::setw(logWidths[i++]) << std::setprecision(epAvgLossIsBig ? 1 : 5) << this->currEpAvgLoss << separator;
-    ss << (epAvgQIsBig    ? std::scientific : std::fixed) << std::setw(logWidths[i++]) << std::setprecision(epAvgQIsBig ? 1 : 5)    << this->currEpAvgQ << separator;
+    ss << (epAvgLossIsBig ? std::scientific : std::fixed) << std::setw(logWidths[i++]) << std::setprecision(epAvgLossIsBig ? 2 : 5) << this->currEpAvgLoss << separator;
+    ss << (epAvgQIsBig    ? std::scientific : std::fixed) << std::setw(logWidths[i++]) << std::setprecision(epAvgQIsBig ? 2 : 5)    << this->currEpAvgQ << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << timeSinceLastRecord << separator;
     ss << std::fixed << std::setw(logWidths[i++]) << timeStr;
     ss << std::endl;

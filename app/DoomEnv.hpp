@@ -65,7 +65,7 @@ public:
     return static_cast<size_t>(doomGuyNetVersion < 2 ? Action::DoomActionMoveForwardAndAttack : Action::DoomActionUse) + 1;
   }
 
-  DoomEnv(size_t maxSteps=1e4, size_t frameSkip=4, bool activePlayEnabled=false, const std::string& mapName="E1M1");
+  DoomEnv(size_t frameSkip=4, const std::string& mapName="E1M1");
   ~DoomEnv();
 
   using StepInfo = std::tuple<torch::Tensor, double, bool>;
@@ -73,7 +73,6 @@ public:
   StepInfo step(const Action& a, size_t networkVersion);
 
   size_t getStepsPerformed() const { return this->stepsPerformed; }
-  size_t getMaxSteps() const { return this->maxSteps; }
   size_t getFrameSkip() const { return this->frameSkip; }
 
   void setMap(const std::string& mapName) { this->doomMapToLoadNext = mapName; };
@@ -94,7 +93,6 @@ private:
 
   // Configuration Variables
   size_t frameSkip;
-  size_t maxSteps;
   std::string doomMapToLoadNext;
 
   bool isEpisodeFinished() const;

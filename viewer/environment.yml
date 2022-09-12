@@ -14,4 +14,9 @@ dependencies:
   - cffi
   - pytorch
   - python
+  - pandas
+  - scipy
+  - pip
+  - pip:
+    - vizdoom
 prefix: /mnt/dev/anaconda3/envs/doom_rl_viewer

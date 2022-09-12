@@ -10,7 +10,6 @@ public:
   static constexpr char doomMapCycle[] = "cycle";
 
   size_t numEpisodes;
-  size_t stepsPerEpMax;
   size_t stepsExplore;
   size_t stepsSave;
   size_t stepsSync;
@@ -22,7 +21,8 @@ public:
   double minLearningRate;
   double maxLearningRate;
 
-  bool isActivePlay;
+  bool isExecTesting;
+
   std::string checkpointFilepath;
   std::string doomMap;
 

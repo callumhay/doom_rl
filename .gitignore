@@ -35,3 +35,5 @@ extern/
 build/
 .vscode/c_cpp_properties.json
 data/
+viewer/testbed/vae/checkpoints/doom_vae.model
+viewer/testbed/classifier/checkpoints/doom_classifier.model

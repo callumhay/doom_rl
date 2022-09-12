@@ -36,8 +36,10 @@ public:
 
   std::string optimizerSaveFilepath(size_t version, size_t minorVersion, size_t saveNum);
   std::string netSaveFilepath(size_t version, size_t minorVersion, size_t saveNum);
-  void save();
+  std::string replayMemSaveFilepath() const;
+  void save(const ReplayMemory& replayMemory);
   void load(const std::string& chkptFilepath);
+  void load(const std::string& chkptFilepath, ReplayMemory& replayMemory);
 
   // Given a state, choose an epsilon-greedy action
   DoomEnv::Action act(torch::Tensor state, std::unique_ptr<DoomEnv>& env); 

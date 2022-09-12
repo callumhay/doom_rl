@@ -79,8 +79,8 @@ constexpr double killReward   = 10.0;
 constexpr double deathReward  = -20.0;
 constexpr double mapEndReward = 100.0;
 
-DoomEnv::DoomEnv(size_t maxSteps, size_t frameSkip, bool activePlayEnabled, const std::string& mapName): 
-game(std::make_unique<DoomGame>()), frameSkip(frameSkip), maxSteps(maxSteps), 
+DoomEnv::DoomEnv(size_t frameSkip, const std::string& mapName): 
+game(std::make_unique<DoomGame>()), frameSkip(frameSkip),
 stepsPerformed(0), doomMapToLoadNext(mapName) {
   // Setup the ViZDoom game environment...
   this->initGameOptions();
@@ -98,7 +98,7 @@ stepsPerformed(0), doomMapToLoadNext(mapName) {
   // Makes episodes start after 10 tics (~after raising the weapon)
   this->game->setEpisodeStartTime(10);
   // Sets ViZDoom mode (PLAYER, ASYNC_PLAYER, SPECTATOR, ASYNC_SPECTATOR, PLAYER mode is default)
-  this->game->setMode(activePlayEnabled ? SPECTATOR : PLAYER);
+  this->game->setMode(PLAYER);
 
   // Disable some stuff... causes ViZDoom to crash on some levels (boo!)
   this->game->setSectorsInfoEnabled(false);
@@ -227,7 +227,6 @@ DoomEnv::Action DoomEnv::getLastAction() const {
 
 bool DoomEnv::isEpisodeFinished() const {
   auto isTerminalState = (
-    (this->maxSteps != 0 && this->stepsPerformed >= this->maxSteps) ||
     this->game->getState() == nullptr || this->game->isEpisodeFinished() || 
     this->game->isPlayerDead() || this->game->isMapEnded()
   );
