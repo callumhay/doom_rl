@@ -16,6 +16,8 @@
       "program": "${file}",
       //"args": ["--checkpoint", "./testbed/checkpoints/doom_classifier.model"],
       //"args": ["--n", "./checkpoints/doom_classifier.model"],
+
+      "args": ["--map", "E1M2"],
       "cwd": "${fileDirname}",
       "console": "integratedTerminal",
       "justMyCode": true

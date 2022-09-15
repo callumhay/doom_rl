@@ -31,9 +31,11 @@
 *.out
 *.app
 
+.vscode/c_cpp_properties.json
 extern/
 build/
-.vscode/c_cpp_properties.json
 data/
-viewer/testbed/vae/checkpoints/doom_vae.model
-viewer/testbed/classifier/checkpoints/doom_classifier.model
+viewer/testbed/vae/checkpoints/
+viewer/testbed/classifier/checkpoints/
+viewer/testbed/vae/__pycache__/
+viewer/testbed/vae/_vizdoom.ini
