@@ -1,132 +1,37 @@
+import math
+
 import torch
 import torch.nn as nn
+import torch.distributions as td
+#import numpy as np
 
+from conv_encode_decode import ConvEncoder, ConvDecoder
 
-_out_channel_list = [32,  64, 128, 256, 512, 512]
-_kernel_size_list = [3,    3,   3,   3,   3,   3]
-_stride_list      = [2,    2,   2,   2,   2,   2]
-_padding_list     = [1,    1,   1,   1,   1,   1]
-
-class ConvEncoder(nn.Module):
-  def __init__(self, in_shape) -> None:
-    super(ConvEncoder, self).__init__()
-    
-    in_channels, in_height, in_width = in_shape
-    
-    self.conv_layers = nn.ModuleList()
-    curr_channels = in_channels
-    curr_width    = in_width
-    curr_height   = in_height
-
-    self.output_sizes = []
-    for out_channels, kernel_size, stride, padding in zip(_out_channel_list, _kernel_size_list, _stride_list, _padding_list):
-      self.conv_layers.append(nn.Conv2d(
-        in_channels=curr_channels, out_channels=out_channels, 
-        kernel_size=kernel_size, stride=stride, padding=padding, bias=False
-      ))
-      self.conv_layers.append(nn.BatchNorm2d(out_channels))
-      self.conv_layers.append(nn.SELU(inplace=True))
-      
-      curr_width  = int((curr_width-kernel_size + 2*padding) / stride + 1)
-      curr_height = int((curr_height-kernel_size + 2*padding) / stride + 1)
-      curr_channels = out_channels
-      self.output_sizes.append((curr_channels, curr_height, curr_width))
-
-    self.conv_output_shape = (curr_channels, curr_height, curr_width)
-    self.conv_output_size  = curr_width*curr_height*curr_channels
-    
-    for m in self.modules():
-      if isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="linear")
-      elif isinstance(m, nn.BatchNorm2d):
-        nn.init.constant_(m.weight, 1.0)
-        nn.init.constant_(m.bias, 0.0)
-    
-  def forward(self, x: torch.Tensor) -> torch.Tensor:
-    for layer in self.conv_layers:
-      x = layer(x)
-    return torch.flatten(x, 1)
-
-# Wrapper for pytorch ConvTranspose2d so that we can provide the specific
-# output size to avoid ambiguous shapes during decoding
-class ConvT2dOutSize(nn.Module):
-  def __init__(self, conv, output_size) -> None:
-    super(ConvT2dOutSize, self).__init__()
-    self.output_size = output_size
-    self.conv = conv
-    
-  def forward(self, x):
-    return self.conv(x, output_size=self.output_size)
-    
-
-class ConvDecoder(nn.Module):
-  def __init__(self, encoder_input_shape, encoder_sizes) -> None:
-    super(ConvDecoder, self).__init__()
-    
-    self.conv_layers = nn.ModuleList()
-    
-    for i in reversed(range(1,len(_padding_list))):
-      in_channels = _out_channel_list[i]
-      out_channels = _out_channel_list[i-1]
-      kernel_size = _kernel_size_list[i]
-      stride = _stride_list[i]
-      padding = _padding_list[i]
-      output_size = encoder_sizes[i-1]
-      
-      self.conv_layers.append(ConvT2dOutSize(nn.ConvTranspose2d(
-        in_channels=in_channels, out_channels=out_channels, kernel_size=kernel_size, 
-        stride=stride, padding=padding, output_padding=0, bias=False
-      ), (output_size[1],output_size[2])))
-      self.conv_layers.append(nn.BatchNorm2d(out_channels))
-      self.conv_layers.append(nn.SELU(inplace=True))
-      
-    encoder_in_channels,encoder_in_h,encoder_in_w = encoder_input_shape
-    self.final_layer = nn.Sequential(
-      ConvT2dOutSize(nn.ConvTranspose2d(
-        in_channels=_out_channel_list[0], out_channels=encoder_in_channels, kernel_size=_kernel_size_list[0],
-        stride=_stride_list[0], padding=_padding_list[0], output_padding=0, bias=False
-      ),(encoder_in_h, encoder_in_w)),
-      #nn.BatchNorm2d(_out_channel_list[0]),
-      #nn.SELU(inplace=True),
-      #nn.Conv2d(_out_channel_list[0], encoder_in_channels, kernel_size=3, stride=1, padding=1),
-      nn.Sigmoid()
-    )
-    
-    for m in self.modules():
-      if isinstance(m, nn.Conv2d):
-        nn.init.kaiming_normal_(m.weight, mode="fan_out", nonlinearity="linear")
-      elif isinstance(m, nn.BatchNorm2d):
-        nn.init.constant_(m.weight, 1.0)
-        nn.init.constant_(m.bias, 0.0)
-    
-  def forward(self, x:torch.Tensor) -> torch.Tensor:
-    for layer in self.conv_layers:
-      x = layer(x)
-    return self.final_layer(x)
-    
+_LATENT_SPACE_SIZE = 2048
 
 class DoomVAE(nn.Module):
-  def __init__(self, input_shape, latent_dim=256) -> None:
+  def __init__(self, input_shape) -> None:
     super(DoomVAE, self).__init__()
     
     self.input_shape = input_shape
-    self.latent_dim = latent_dim
+    self.latent_dim = _LATENT_SPACE_SIZE
+    self.running_mse = None
     
     # Encoder
     self.conv_encoder = ConvEncoder(input_shape)
     
     # Latent representation 
     prelatent_size = self.conv_encoder.conv_output_size
-    self.z_mu      = nn.Linear(prelatent_size, latent_dim)
-    self.z_logvar   = nn.Linear(prelatent_size, latent_dim)
+    self.z_mu      = nn.Linear(prelatent_size, self.latent_dim)
+    self.z_logvar   = nn.Linear(prelatent_size, self.latent_dim)
     
     # This is very important, apparently negative logvar values can explode the gradient
     nn.init.constant_(self.z_logvar.weight, 0.0)
     nn.init.constant_(self.z_logvar.bias, 0.0)
     
     # Decoder
-    self.decoder_input = nn.Linear(latent_dim, prelatent_size)
-    self.conv_decoder = ConvDecoder(input_shape, self.conv_encoder.output_sizes)
+    self.decoder_input = nn.Linear(self.latent_dim, prelatent_size)
+    self.conv_decoder = ConvDecoder(self.input_shape, self.conv_encoder.output_sizes)
     
     
   def encode(self, input:torch.Tensor) -> list[torch.Tensor]:
@@ -170,21 +75,42 @@ class DoomVAE(nn.Module):
         torch.Tensor: 'z' latent representation as a sampled tensor [B x D]
     """
     std = torch.exp(0.5 * logvar)
-    epsilon = torch.randn_like(std)
-    return epsilon * std + mu
+    #std = torch.nn.functional.softplus(std) + 0.1
+    return torch.randn_like(std) * std + mu
   
   def forward(self, input:torch.Tensor) -> list[torch.Tensor]:
     mu, logvar = self.encode(input)
     z = self.reparameterize(mu, logvar)
     return [self.decode(z), input, mu, logvar]
 
+  def loss_function(self, reconstruction, input, mu, logvar, kl_beta=0.8):
 
-  def loss_function(self, reconstruction, input, mu, logvar, kl_beta):
-    _, img_h, img_w = self.input_shape
-    reconst_loss = img_w * img_h * nn.functional.mse_loss(reconstruction, input) #nn.functional.binary_cross_entropy(reconstruction, input, reduction='mean')
+    # Normal distribution logprob loss
+    sigma = ((input-reconstruction)**2).mean([0,1,2,3], keepdim=True).sqrt()
+    reconst_dist = td.Independent(td.Normal(reconstruction, sigma), len(self.input_shape))
+    reconst_loss = -torch.mean(reconst_dist.log_prob(input))
+    
+    '''
+    prior_dist = self.RSSM.get_dist(prior)
+    post_dist = self.RSSM.get_dist(posterior)
+    alpha = 0.8
+    kl_lhs = torch.mean(torch.distributions.kl.kl_divergence(self.RSSM.get_dist(self.RSSM.rssm_detach(posterior)), prior_dist))
+    kl_rhs = torch.mean(torch.distributions.kl.kl_divergence(post_dist, self.RSSM.get_dist(self.RSSM.rssm_detach(prior))))
+    if self.kl_info['use_free_nats']:
+        free_nats = self.kl_info['free_nats']
+        kl_lhs = torch.max(kl_lhs,kl_lhs.new_full(kl_lhs.size(), free_nats))
+        kl_rhs = torch.max(kl_rhs,kl_rhs.new_full(kl_rhs.size(), free_nats))
+    kl_loss = alpha*kl_lhs + (1-alpha)*kl_rhs
+    '''
+    
+    # Reconst MSE Mean
+    #reconst_loss = nn.functional.mse_loss(reconstruction, input.detach())
+    # KLD Mean
     kld_loss = torch.mean(-0.5 * torch.sum(1.0 + logvar - mu**2 - logvar.exp(), dim=1), dim=0)
+
     return [reconst_loss + kl_beta * kld_loss, reconst_loss.detach(), kld_loss.detach()]
-  
+    
+
   def sample(self, num_samples:int, device:torch.device) -> torch.Tensor:
     """
     Samples from the latent space and returns the corresponding image space map.
@@ -198,7 +124,7 @@ class DoomVAE(nn.Module):
     return self.decode(z)
   
   def sample_mean(self, input:torch.Tensor) -> torch.Tensor:
-    mu, logvar = self.encode(input)
+    mu, _ = self.encode(input)
     return self.decode(mu)
   
   def generate(self, x:torch.Tensor) -> torch.Tensor:

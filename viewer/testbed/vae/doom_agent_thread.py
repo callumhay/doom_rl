@@ -2,6 +2,7 @@
 import os
 import typing
 import math
+import time
 
 import torch
 import torchvision.transforms.functional as torchvisfunc
@@ -16,7 +17,7 @@ import vizdoom as vzd
 from doom_env import DoomEnv
 from doom_vae import DoomVAE
 
-LATENT_SPACE_SIZE = 1024
+
 PREPROCESS_RES_H_W = (128,160) # Must be (H,W)!
 PREPROCESS_FINAL_SHAPE_C_H_W = (3, PREPROCESS_RES_H_W[0], PREPROCESS_RES_H_W[1])
 
@@ -25,8 +26,8 @@ DEVICE = torch.device(DEVICE_STR)
 
 
 class DoomAgentOptions:
-  num_episodes=10000 
-  batch_size = 8
+  num_episodes = 10000 
+  batch_size = 128
   model_filepath     = "./checkpoints/doom_vae.model"
   optimizer_filepath = "./checkpoints/doom_vae.optim"
   doom_map = "E1M1"
@@ -47,9 +48,15 @@ class DoomAgentThread(QThread):
   def set_batches_per_action(self, bpa):
     self.batches_per_action = bpa
     print(f"Updating batches per action to {bpa}")
+  @pyqtSlot(bool)
+  def toggle_play(self, toggle):
+    self.is_play_enabled = toggle
   @pyqtSlot()
   def request_screenbuf(self):
      self.screenbuf_signal.emit(self._last_screenbuf.detach().clone())
+  @pyqtSlot(int)
+  def set_fps(self, fps):
+    self.screenbuf_signal_fps = fps
   @pyqtSlot()
   def stop(self):
     self._force_killed = True
@@ -62,9 +69,11 @@ class DoomAgentThread(QThread):
     self._force_killed = False
     self.doom_env = None
     self._last_screenbuf = torch.Tensor()
-    self.lr_min = 0.0002
-    self.lr_max = 0.0002
+    self.lr_min = 0.00001
+    self.lr_max = 0.00001
     self.batches_per_action = 1
+    self.is_play_enabled = True
+    self.screenbuf_signal_fps = 1
     
   def __del__(self):
     self._force_killed = True
@@ -77,7 +86,7 @@ class DoomAgentThread(QThread):
       self.doom_env.game.close()
 
   def build_vae_network(self):
-    net = DoomVAE(PREPROCESS_FINAL_SHAPE_C_H_W, LATENT_SPACE_SIZE)
+    net = DoomVAE(PREPROCESS_FINAL_SHAPE_C_H_W)
     model_filepath = self.options.model_filepath
     if os.path.exists(model_filepath):
       net.load_state_dict(torch.load(model_filepath))
@@ -133,6 +142,7 @@ class DoomAgentThread(QThread):
     last_loss = 999999
     batches_since_last_action = 0
     loss_correction_attempts = 0
+    last_time_ns = time.perf_counter_ns()
     
     # Run the simulation across the set number of episodes
     for epIdx in range(self.options.num_episodes):
@@ -169,16 +179,24 @@ class DoomAgentThread(QThread):
           
         input_batch.append(screen_tensor)
         self._last_screenbuf = screen_tensor
-        if epIdx == 0: self.screenbuf_available_signal.emit()
+        if epIdx == 0:
+          self.screenbuf_available_signal.emit()
+          
+        curr_time_ns = time.perf_counter_ns()
+        delta_time_ms = (curr_time_ns - last_time_ns) // 1e6
+        if self.screenbuf_signal_fps != 0 and delta_time_ms >= 1000*(1.0 / float(self.screenbuf_signal_fps)):
+          self.request_screenbuf()
+          last_time_ns = curr_time_ns
         
         count += 1
-        if count % batch_size == 0:
+        if len(input_batch) >= batch_size:
+          self.optimizer.zero_grad()
           
           inputs = torch.stack(input_batch).to(DEVICE)
           reconst, input, mu, logvar = self.vae_net(inputs)
           
-          kl_beta = math.sin(0.5*math.pi * float(kl_decay_count) / KL_CYCLE_LENGTH)
-          
+          #kl_beta = math.sin(0.5*math.pi * float(kl_decay_count) / KL_CYCLE_LENGTH)
+    
           if kl_decay_count < KL_CYCLE_LENGTH: kl_decay_count += 1
           else: 
             kl_wait_count += 1
@@ -186,7 +204,7 @@ class DoomAgentThread(QThread):
               kl_wait_count = 0
               kl_decay_count = 0
           
-          loss, reconst_loss, kld_loss = self.vae_net.loss_function(reconst, inputs, mu, logvar, kl_beta)
+          loss, reconst_loss, kld_loss = self.vae_net.loss_function(reconst, inputs, mu, logvar)
           
           if math.isnan(loss) or math.isinf(loss):
             print("Loss is inf/nan, exiting")
@@ -207,7 +225,6 @@ class DoomAgentThread(QThread):
             self._force_killed = True
             break
           
-          self.optimizer.zero_grad()
           loss.backward()
           self.optimizer.step()
         
@@ -217,9 +234,9 @@ class DoomAgentThread(QThread):
           last_loss = loss.item()
           
           if count % 10 == 0:
-            print(f"[Batch #: {batch_num}, Episode #: {epNum}] Loss: {loss:.5f}, Reconst Loss: {reconst_loss:.3f}, KLD Loss: {kld_loss:.3f}, kl_beta: {kl_beta:.5f}, lr: {self.optimizer.param_groups[0]['lr']:.6f}")
+            print(f"[Batch #: {batch_num}, Episode #: {epNum}] Loss: {loss:.5f}, Reconst Loss: {reconst_loss:.5f}, KLD Loss: {kld_loss:.5f}, lr: {self.optimizer.param_groups[0]['lr']:.7f}")
               
-          if batch_num % 1000 == 0:
+          if batch_num % 500 == 0:
             torch.save(self.vae_net.state_dict(), model_filepath)
             print("Model saved to " + model_filepath)
             torch.save(self.optimizer.state_dict(), optim_filepath)
@@ -229,10 +246,10 @@ class DoomAgentThread(QThread):
         if self.doom_env.game.get_mode() == vzd.Mode.SPECTATOR:
           self.doom_env.game.advance_action()
 
-        if batches_since_last_action >= self.batches_per_action:
-          #if last_loss < 200:
+        if self.is_play_enabled and batches_since_last_action >= self.batches_per_action:
           next_state, reward, done = self.doom_env.step(self.doom_env.random_action())
           batches_since_last_action = 0
+
         
         #if next_state == None:
         #  done = True

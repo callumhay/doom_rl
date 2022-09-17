@@ -6,7 +6,7 @@ import torchvision.transforms.functional as F
 #import torchshow as ts
 
 from PIL.ImageQt import ImageQt
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QSpacerItem, QSizePolicy, QSlider
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QPushButton, QVBoxLayout, QHBoxLayout, QLabel, QSpacerItem, QSizePolicy, QCheckBox
 from PyQt6.QtGui import QPixmap
 from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
 import PyQt6.QtWidgets as QtWidgets
@@ -19,7 +19,7 @@ class DoomAgentMainWindow(QMainWindow):
   # Signals
   lr_changed_signal = pyqtSignal(float, float, name="lr_changed")
   batches_per_action_changed_signal = pyqtSignal(int, name="batches_per_action_changed")
-  
+
   def __init__(self, parent: typing.Optional[QWidget] = None, flags: QtCore.Qt.WindowType = QtCore.Qt.WindowType.Window) -> None:
     super().__init__(parent, flags)
     
@@ -32,7 +32,7 @@ class DoomAgentMainWindow(QMainWindow):
     self.doom_agent.finished.connect(self.on_doom_agent_finished)
     self.lr_changed_signal.connect(self.doom_agent.set_lr_min_max)
     self.batches_per_action_changed_signal.connect(self.doom_agent.set_batches_per_action)
-    
+
     # VAE network for GUI visualization (training is done by the DoomAgentThread)
     self.doom_vae = self.doom_agent.build_vae_network()
     self.doom_vae.eval()
@@ -42,6 +42,12 @@ class DoomAgentMainWindow(QMainWindow):
     self.request_screenbuf_btn = QPushButton("Capture Screen")
     self.request_screenbuf_btn.pressed.connect(self.doom_agent.request_screenbuf)
     self.request_screenbuf_btn.setEnabled(False)
+    self.screenbuf_fps_spinbox = QtWidgets.QSpinBox()
+    self.screenbuf_fps_spinbox.setMinimum(0)
+    self.screenbuf_fps_spinbox.setMaximum(35)
+    self.screenbuf_fps_spinbox.setValue(self.doom_agent.screenbuf_signal_fps)
+    self.screenbuf_fps_spinbox.valueChanged.connect(self.doom_agent.set_fps)
+    self.screenbuf_fps_spinbox.valueChanged.connect(lambda x: self.request_screenbuf_btn.setEnabled(False if x==0 else True))
     
     self.start_agent_btn = QPushButton("Start Agent")
     self.start_agent_btn.pressed.connect(self.start_stop_agent_slot)
@@ -77,7 +83,16 @@ class DoomAgentMainWindow(QMainWindow):
     output_top_layout.addWidget(self.output_img_label, alignment=Qt.AlignmentFlag.AlignCenter)
     output_top_layout.addWidget(label_grid_widget, alignment=Qt.AlignmentFlag.AlignCenter)
     output_top_layout.addSpacerItem(QSpacerItem(20,40, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding))
-    output_top_layout.addWidget(self.request_screenbuf_btn)
+    
+    output_controls_widget = QWidget()
+    output_controls_layout = QHBoxLayout()
+    output_controls_widget.setLayout(output_controls_layout)
+    output_controls_layout.addSpacerItem(QSpacerItem(40,20,QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
+    output_controls_layout.addWidget(QLabel("fps:"))
+    output_controls_layout.addWidget(self.screenbuf_fps_spinbox)
+    output_controls_layout.addWidget(self.request_screenbuf_btn)
+    output_top_layout.addWidget(output_controls_widget)
+    output_controls_layout.addSpacerItem(QSpacerItem(40,20,QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
     
     img_display_widget = QWidget()
     img_layout = QHBoxLayout()
@@ -87,18 +102,18 @@ class DoomAgentMainWindow(QMainWindow):
     img_layout.addWidget(output_img_widget, alignment=Qt.AlignmentFlag.AlignCenter)
     
     self.lr_min_widget = QtWidgets.QDoubleSpinBox()
-    self.lr_min_widget.setDecimals(7)
+    self.lr_min_widget.setDecimals(9)
     self.lr_min_widget.setStepType(QtWidgets.QDoubleSpinBox.StepType.AdaptiveDecimalStepType)
-    self.lr_min_widget.setMinimum(0.0000001)
+    self.lr_min_widget.setMinimum(0.000000001)
     self.lr_min_widget.setMaximum(0.1)
     self.lr_min_widget.setValue(self.doom_agent.lr_min)
     self.lr_min_widget.editingFinished.connect(self.update_lr)
     self.lr_min_widget.setEnabled(True)
     
     self.lr_max_widget = QtWidgets.QDoubleSpinBox()
-    self.lr_max_widget.setDecimals(7)
+    self.lr_max_widget.setDecimals(9)
     self.lr_max_widget.setStepType(QtWidgets.QDoubleSpinBox.StepType.AdaptiveDecimalStepType)
-    self.lr_max_widget.setMinimum(0.0000001)
+    self.lr_max_widget.setMinimum(0.000000001)
     self.lr_max_widget.setMaximum(0.1)
     self.lr_max_widget.setValue(self.doom_agent.lr_max)
     self.lr_max_widget.editingFinished.connect(self.update_lr)
@@ -111,6 +126,10 @@ class DoomAgentMainWindow(QMainWindow):
     self.batches_per_action_widget.setValue(self.doom_agent.batches_per_action)
     self.batches_per_action_widget.editingFinished.connect(self.update_batches_per_action)
     self.batches_per_action_widget.setEnabled(True)
+    
+    self.toggle_play_chkbox = QCheckBox("Enable Play")
+    self.toggle_play_chkbox.setChecked(True)
+    self.toggle_play_chkbox.toggled.connect(self.doom_agent.toggle_play)
 
     btn_widget = QWidget()
     btn_layout = QHBoxLayout()
@@ -122,8 +141,8 @@ class DoomAgentMainWindow(QMainWindow):
     btn_layout.addWidget(self.lr_max_widget)
     btn_layout.addWidget(QLabel("Batches per Action:"))
     btn_layout.addWidget(self.batches_per_action_widget)
+    btn_layout.addWidget(self.toggle_play_chkbox)
     btn_layout.addSpacerItem(QSpacerItem(40,20,QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum))
-    
     
     top_level_layout = QVBoxLayout()
     top_level_layout.addWidget(img_display_widget)
@@ -164,8 +183,15 @@ class DoomAgentMainWindow(QMainWindow):
   def update_lr(self):
     b1 = QtCore.QSignalBlocker(self.lr_max_widget)
     b2 = QtCore.QSignalBlocker(self.lr_min_widget)
-    self.lr_max_widget.setValue(max(self.lr_max_widget.value(), self.lr_min_widget.value()))
-    self.lr_min_widget.setValue(min(self.lr_max_widget.value(), self.lr_min_widget.value()))
+    
+    sender = self.sender()
+    if sender == self.lr_max_widget:
+      self.lr_min_widget.setValue(min(self.lr_max_widget.value(), self.lr_min_widget.value()))
+      self.lr_max_widget.setValue(max(self.lr_max_widget.value(), self.lr_min_widget.value()))
+    elif sender == self.lr_min_widget:
+      self.lr_max_widget.setValue(max(self.lr_max_widget.value(), self.lr_min_widget.value()))  
+      self.lr_min_widget.setValue(min(self.lr_max_widget.value(), self.lr_min_widget.value()))
+    
     self.lr_changed_signal.emit(self.lr_min_widget.value(), self.lr_max_widget.value())
   @pyqtSlot()
   def update_batches_per_action(self):
