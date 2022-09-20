@@ -1,15 +1,18 @@
 import torch
 import torch.nn as nn
+import torch.distributions as td
+import torch.nn.functional as F
+import numpy as np
 
 _out_channel_list = [32,  64, 128, 256, 512, 1024]
 _kernel_size_list = [3,    3,   3,   3,   3,    3]
 _stride_list      = [2,    2,   2,   2,   2,    2]
 _padding_list     = [1,    1,   1,   1,   1,    1]
 
-_use_batch_norm = True
+_use_batch_norm = False
 
 class ConvEncoder(nn.Module):
-  def __init__(self, in_shape) -> None:
+  def __init__(self, in_shape, embedded_size) -> None:
     super(ConvEncoder, self).__init__()
     
     in_channels, in_height, in_width = in_shape
@@ -36,6 +39,9 @@ class ConvEncoder(nn.Module):
     self.conv_output_shape = (curr_channels, curr_height, curr_width)
     self.conv_output_size  = curr_width*curr_height*curr_channels
     
+    # Last layer converts the Convolution output into the embedded size
+    self.fc_embedded = nn.Linear(self.conv_output_size, embedded_size)
+    
     #for m in self.modules():
     #  if isinstance(m, nn.Conv2d):
     #    nn.init.uniform_(m.weight)
@@ -43,7 +49,7 @@ class ConvEncoder(nn.Module):
     
   def forward(self, x: torch.Tensor) -> torch.Tensor:
     x = self.encoder(x)
-    return torch.flatten(x, 1)
+    return self.fc_embedded(torch.flatten(x, 1))
 
 # Wrapper for pytorch ConvTranspose2d so that we can provide the specific
 # output size to avoid ambiguous shapes during decoding
@@ -58,8 +64,12 @@ class ConvT2dOutSize(nn.Module):
     
 
 class ConvDecoder(nn.Module):
-  def __init__(self, encoder_input_shape, encoder_sizes) -> None:
+  def __init__(self, encoder_input_shape, encoder_output_shape, encoder_sizes, modelstate_size) -> None:
     super(ConvDecoder, self).__init__()
+    
+    prelatent_size = np.prod(encoder_output_shape)
+    self.input_shape = encoder_output_shape
+    self.fc_modelstate = nn.Linear(modelstate_size, prelatent_size)
     
     self.decoder = nn.Sequential()
     for i in reversed(range(1,len(_padding_list))):
@@ -81,15 +91,23 @@ class ConvDecoder(nn.Module):
     self.decoder.append(
       ConvT2dOutSize(nn.ConvTranspose2d(
         in_channels=_out_channel_list[0], out_channels=encoder_in_channels, kernel_size=_kernel_size_list[0],
-        stride=_stride_list[0], padding=_padding_list[0], output_padding=1, bias=False
+        stride=_stride_list[0], padding=_padding_list[0]
       ),(encoder_in_h, encoder_in_w)),
     )
-    self.decoder.append(nn.Sigmoid())
+    # Applying a non-linearity here removes artifacts but does not result in as-good a representation
+    #self.decoder.append(nn.Tanh()) # TODO: Get rid of this if it isn't working.
     
     #for m in self.modules():
     #  if isinstance(m, nn.Conv2d):
     #    nn.init.uniform_(m.weight)
     
   def forward(self, x:torch.Tensor) -> torch.Tensor:
+    conv_ch, conv_h, conv_w = self.input_shape
+    x = self.fc_modelstate(x)
+    x = x.view(-1, conv_ch, conv_h, conv_w)
     return self.decoder(x)
+
+  def get_distribution(self, observations: torch.Tensor, reconstructions: torch.Tensor) -> td.Independent:
+    sigma = (-6 + F.softplus(((observations-reconstructions)**2).mean([0,1,2,3], keepdim=True).sqrt().log()+6)).exp()
+    return td.Independent(td.Normal(reconstructions, sigma), len(self.input_shape))
   

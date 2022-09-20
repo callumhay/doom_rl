@@ -1,5 +1,10 @@
+import torchvision.transforms.functional as torchvisfunc
+import numpy as np
 import vizdoom as vzd
 from random import choice
+
+PREPROCESS_RES_H_W = (128,160) # Must be (H,W)!
+PREPROCESS_FINAL_SHAPE_C_H_W = (3, PREPROCESS_RES_H_W[0], PREPROCESS_RES_H_W[1])
 
 class DoomEnv:
   def __init__(self, map:str) -> None:
@@ -11,7 +16,7 @@ class DoomEnv:
     self.game.set_doom_game_path("../../../build/bin/doom.wad")
     self.game.set_doom_scenario_path("../../../build/bin/doom.wad")
     self.game.set_doom_map(self.map)
-    self.game.set_mode(vzd.Mode.PLAYER)
+    self.game.set_mode(vzd.Mode.SPECTATOR)#PLAYER)
     self.game.set_episode_start_time(10)
     self.game.set_episode_timeout(self.episode_timeout)
     #game.add_game_args("+freelook 1")
@@ -24,7 +29,7 @@ class DoomEnv:
     self.game.set_render_particles(True)
     self.game.set_render_effects_sprites(True)
     self.game.set_render_corpses(True)
-    #game.set_render_messages(False)
+    self.game.set_render_messages(False)
     
     self.game.set_screen_resolution(vzd.ScreenResolution.RES_320X256)
 
@@ -48,6 +53,7 @@ class DoomEnv:
       "MoveForward" : [False,False,False,False,False,True,False,False],
       "MoveBackward": [False,False,False,False,False,False,True,False],
       "Use"         : [False,False,False,False,False,False,False,True],
+      
       "NoAction"    : [False,False,False,False,False,False,False,False],
     }
     self.game.set_available_buttons([
@@ -102,4 +108,20 @@ class DoomEnv:
       print("Agent died!")
       reward -= 20
     
+    # TODO: observation, reward, done
     return [state, reward, self.is_episode_finished()] 
+
+
+  def preprocess_screenbuffer(screenbuf):
+    screenbuf = torchvisfunc.to_tensor(screenbuf)
+    screenbuf = torchvisfunc.resize(screenbuf, PREPROCESS_RES_H_W)
+    screenbuf = torchvisfunc.normalize(screenbuf, (0.485,0.456,0.406), (0.229,0.224,0.225))
+
+    assert screenbuf.shape == PREPROCESS_FINAL_SHAPE_C_H_W
+    assert np.count_nonzero(np.isnan(screenbuf.numpy())) == 0
+    return screenbuf
+  
+  def deprocess_screenbuffer(screenbuf_tensor):
+    screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (0.,0.,0.), (1.0/0.229,1.0/0.224,1.0/0.225))
+    screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (-0.485,-0.456,-0.406), (1.,1.,1.))
+    return screenbuf_tensor

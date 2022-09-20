@@ -13,7 +13,8 @@ import PyQt6.QtWidgets as QtWidgets
 import PyQt6.QtCore as QtCore
 import PyQt6.QtGui as QtGui
 
-from doom_agent_thread import DoomAgentThread, PREPROCESS_RES_H_W, DEVICE
+from doom_agent_thread import DoomAgentThread, DEVICE
+from doom_env import DoomEnv, PREPROCESS_RES_H_W
 
 class DoomAgentMainWindow(QMainWindow):
   # Signals
@@ -156,7 +157,7 @@ class DoomAgentMainWindow(QMainWindow):
     
   def _update_label_image_from_screenbuf(label, tensor):
     tensor = tensor.squeeze(0) if tensor.ndim == 4 else tensor
-    orig_tensor = DoomAgentThread.deprocess_screenbuffer(tensor).to(torch.device('cpu'))
+    orig_tensor = DoomEnv.deprocess_screenbuffer(tensor).to(torch.device('cpu'))
     qpixmap = QPixmap.fromImage(ImageQt(F.to_pil_image(orig_tensor)))
     label.setPixmap(qpixmap.scaled(label.width(),label.height(), Qt.AspectRatioMode.KeepAspectRatio))
     label.repaint()
@@ -172,12 +173,12 @@ class DoomAgentMainWindow(QMainWindow):
     self.input_screenbuf_tensor = screenbuf_tensor.to(DEVICE).unsqueeze_(0)
     DoomAgentMainWindow._update_label_image_from_screenbuf(self.input_img_label, screenbuf_tensor)
     # Run the input screen buffer through the Doom VAE network and show what the encoded to decoded output looks like 
-    DoomAgentMainWindow._update_label_image_from_screenbuf(self.output_img_label, self.doom_vae.sample_mean(self.input_screenbuf_tensor))
     output_screenbuf_tensors = self.doom_vae.generate(
-      self.input_screenbuf_tensor.expand(len(self.output_img_labels),*screenbuf_tensor.shape)
+      self.input_screenbuf_tensor.expand(len(self.output_img_labels)+1,*screenbuf_tensor.shape)
     )
     for i in range(len(self.output_img_labels)):
       DoomAgentMainWindow._update_label_image_from_screenbuf(self.output_img_labels[i], output_screenbuf_tensors[i])
+    DoomAgentMainWindow._update_label_image_from_screenbuf(self.output_img_label, output_screenbuf_tensors[0])
     
   @pyqtSlot()
   def update_lr(self):

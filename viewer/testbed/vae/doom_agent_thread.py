@@ -17,17 +17,13 @@ import vizdoom as vzd
 from doom_env import DoomEnv
 from doom_vae import DoomVAE
 
-
-PREPROCESS_RES_H_W = (128,160) # Must be (H,W)!
-PREPROCESS_FINAL_SHAPE_C_H_W = (3, PREPROCESS_RES_H_W[0], PREPROCESS_RES_H_W[1])
-
 DEVICE_STR = "cuda" if torch.cuda.is_available() else "cpu"
 DEVICE = torch.device(DEVICE_STR)
 
 
 class DoomAgentOptions:
   num_episodes = 10000 
-  batch_size = 128
+  batch_size = 32
   model_filepath     = "./checkpoints/doom_vae.model"
   optimizer_filepath = "./checkpoints/doom_vae.optim"
   doom_map = "E1M1"
@@ -73,7 +69,7 @@ class DoomAgentThread(QThread):
     self.lr_max = 0.00001
     self.batches_per_action = 1
     self.is_play_enabled = True
-    self.screenbuf_signal_fps = 1
+    self.screenbuf_signal_fps = 8
     
   def __del__(self):
     self._force_killed = True
@@ -95,20 +91,6 @@ class DoomAgentThread(QThread):
       print("Could not find file " + model_filepath)
 
     return net.to(DEVICE)
-
-  def preprocess_screenbuffer(screenbuf):
-    screenbuf = torchvisfunc.to_tensor(screenbuf)
-    screenbuf = torchvisfunc.resize(screenbuf, PREPROCESS_RES_H_W)
-    #screenbuf = torchvisfunc.normalize(screenbuf, (0.485,0.456,0.406), (0.229,0.224,0.225))
-    #screenbuf = screenbuf[:,0:non_hud_height,:]
-    assert screenbuf.shape == PREPROCESS_FINAL_SHAPE_C_H_W
-    assert np.count_nonzero(np.isnan(screenbuf.numpy())) == 0
-    return screenbuf
-  
-  def deprocess_screenbuffer(screenbuf_tensor):
-    #screenbuf = torchvisfunc.normalize(screenbuf_tensor, (0.,0.,0.), (1.0/0.229,1.0/0.224,1.0/0.225))
-    #screenbuf = torchvisfunc.normalize(screenbuf, (-0.485,-0.456,-0.406), (1.,1.,1.))
-    return screenbuf_tensor
   
   def run(self):
     self._force_killed = False
@@ -124,8 +106,8 @@ class DoomAgentThread(QThread):
       self.optimizer.load_state_dict(torch.load(optim_filepath))
       print("Optimizer loaded from " + optim_filepath)
     
-    print("Model Summary...")
-    summary(self.vae_net, input_size=PREPROCESS_FINAL_SHAPE_C_H_W, device=DEVICE_STR)
+    #print("Model Summary...")
+    #summary(self.vae_net, input_size=PREPROCESS_FINAL_SHAPE_C_H_W, device=DEVICE_STR)
     
     # Setup our environment (for simulation)
     self.doom_env = DoomEnv(doom_map)
@@ -172,7 +154,7 @@ class DoomAgentThread(QThread):
         if self._force_killed:
           break
         
-        screen_tensor = DoomAgentThread.preprocess_screenbuffer(state.screen_buffer)
+        screen_tensor = DoomEnv.preprocess_screenbuffer(state.screen_buffer)
         if np.count_nonzero(screen_tensor.numpy()) == 0:
           print("************ ALL ZEROES!!!!!!! ************")
           exit()
@@ -190,10 +172,7 @@ class DoomAgentThread(QThread):
         
         count += 1
         if len(input_batch) >= batch_size:
-          self.optimizer.zero_grad()
-          
-          inputs = torch.stack(input_batch).to(DEVICE)
-          reconst, input, mu, logvar = self.vae_net(inputs)
+
           
           #kl_beta = math.sin(0.5*math.pi * float(kl_decay_count) / KL_CYCLE_LENGTH)
     
@@ -204,7 +183,12 @@ class DoomAgentThread(QThread):
               kl_wait_count = 0
               kl_decay_count = 0
           
-          loss, reconst_loss, kld_loss = self.vae_net.loss_function(reconst, inputs, mu, logvar)
+          # Train the agent...
+          self.optimizer.zero_grad()
+          inputs = torch.stack(input_batch).to(DEVICE)
+          #reconst, input, mu, logvar = self.vae_net(inputs)
+          obs_reconst, loss, reconst_loss, kld_loss = self.vae_net(inputs, device=DEVICE)
+          #loss, reconst_loss, kld_loss = self.vae_net.loss_function(reconst, inputs, mu, logvar)
           
           if math.isnan(loss) or math.isinf(loss):
             print("Loss is inf/nan, exiting")
@@ -250,11 +234,4 @@ class DoomAgentThread(QThread):
           next_state, reward, done = self.doom_env.step(self.doom_env.random_action())
           batches_since_last_action = 0
 
-        
-        #if next_state == None:
-        #  done = True
-        #  continue
-
-        
-        #TODO: state = next_state
 
