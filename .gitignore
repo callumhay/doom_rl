@@ -39,3 +39,4 @@ viewer/testbed/vae/checkpoints/
 viewer/testbed/classifier/checkpoints/
 viewer/testbed/vae/__pycache__/
 viewer/testbed/vae/_vizdoom.ini
+viewer/testbed/dreamerv2/
