@@ -1,4 +1,5 @@
 
+from cmath import inf
 import os
 import typing
 import math
@@ -18,8 +19,6 @@ from PyQt6.QtCore import pyqtSlot, pyqtSignal, QObject, QThread
 import vizdoom as vzd
 
 from doom_env import DoomEnv, PREPROCESS_FINAL_SHAPE_C_H_W
-
-
 from sd_vae import SDVAE
 
 DEVICE_STR = "cuda" if torch.cuda.is_available() else "cpu"
@@ -70,11 +69,12 @@ class DoomAgentThread(QThread):
     self._force_killed = False
     self.doom_env = None
     self._last_screenbuf = torch.Tensor()
-    self.lr_min = 0.00001
-    self.lr_max = 0.00001
+    self.lr_min = 4.5e-6
+    self.lr_max = self.lr_min
     self.batches_per_action = 1
     self.is_play_enabled = True
     self.screenbuf_signal_fps = 8
+    self.last_loss = float('inf')
     
     self.vae_config_info = None
     with open("config/sd_vae_config.yaml", "r") as ymlfile:
@@ -96,7 +96,8 @@ class DoomAgentThread(QThread):
     if os.path.exists(model_filepath):
       model_dict = torch.load(model_filepath)
       self.vae_config_info = model_dict['config']
-      model_info  = model_dict['model']
+      model_info           = model_dict['model']
+      self.last_loss       = model_dict['loss'] if 'loss' in model_dict else float('inf')
     else:
       print("Could not find file " + model_filepath)
   
@@ -104,16 +105,7 @@ class DoomAgentThread(QThread):
     if model_info != None:
       net.load_state_dict(model_info)
       print("Model loaded from " + model_filepath)
-    
-    '''
-    net = DoomVAE(PREPROCESS_FINAL_SHAPE_C_H_W)
-    model_filepath = self.options.model_filepath
-    if os.path.exists(model_filepath):
-      net.load_state_dict(torch.load(model_filepath))
-      print("Model loaded from " + model_filepath)
-    else:
-      print("Could not find file " + model_filepath)
-    '''
+
     return net.to(DEVICE)
   
   def run(self):
@@ -247,15 +239,19 @@ class DoomAgentThread(QThread):
               
           if batch_num % 500 == 0:
             #torch.save(self.vae_net.state_dict(), model_filepath)
-            torch.save({
-              'config': self.vae_config_info,
-              'model' : self.vae_net.state_dict(),
-            }, model_filepath)
-            
-            print("Model saved to " + model_filepath)
-            torch.save(self.optimizer.state_dict(), optim_filepath)
-            print("Optimizer saved to " + optim_filepath)
-            self.vae_saved_signal.emit()
+            if abs(self.last_loss) > abs(last_loss): 
+              torch.save({
+                'config': self.vae_config_info,
+                'model' : self.vae_net.state_dict(),
+                'loss'  : last_loss
+              }, model_filepath)
+              self.last_loss = last_loss
+              print("Model saved to " + model_filepath)
+              torch.save(self.optimizer.state_dict(), optim_filepath)
+              print("Optimizer saved to " + optim_filepath)
+              self.vae_saved_signal.emit()
+            else:
+              print("Model was not saved: Loss has not improved since last save.")
 
         if self.doom_env.game.get_mode() == vzd.Mode.SPECTATOR:
           self.doom_env.game.advance_action()

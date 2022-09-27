@@ -52,15 +52,13 @@ class DoomDiscreteActionModel(nn.Module):
     # Epsilon-greedy policy
     if np.random.uniform(0,1) < self.epsilon:
       idx = torch.randint(0, self.action_size, action.shape[:-1], device=action.device)
-      action = torch.zeros_like(action)
+      action = torch.zeros_like(action, device=action.device, dtype=torch.float16)
       action[:,idx] = 1
       
     return action
 
 class DoomDenseModel(nn.Module):
-  def __init__(
-    self, output_shape: int, input_size: int, info: Dict
-  ) -> None:
+  def __init__(self, output_shape: int, input_size: int, info: Dict) -> None:
     super().__init__()
     self.output_shape = output_shape
     self.distribution_type = info['distribution_type']
@@ -77,8 +75,11 @@ class DoomDenseModel(nn.Module):
     model += [nn.Linear(hidden_size, int(np.prod(self.output_shape)))]
     self.model = nn.Sequential(*model)
     
+  def forward(self, x:torch.Tensor) -> torch.Tensor:
+    return self.model(x)
+    
   def get_distribution(self, input:torch.Tensor) -> td.Independent:
-    distributed_inputs = self.model(input)
+    distributed_inputs = self(input)
     if self.distribution_type == 'normal':
       return td.Independent(td.Normal(distributed_inputs, 1), len(self.output_shape))
     elif self.distribution_type == 'binary':

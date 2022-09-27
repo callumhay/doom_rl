@@ -7,8 +7,6 @@ import torch.nn.functional as F
 import torch.distributions as td
 #import numpy as np
 
-from conv_encode_decode import ConvEncoder, ConvDecoder
-
 VAEDiscState = namedtuple('VAEDiscState', ['logit', 'stoch', 'deter'])
 VAEContState = namedtuple('VAEContState', ['mean', 'std', 'stoch', 'deter'])  
 VAEState = Union[VAEDiscState, VAEContState]

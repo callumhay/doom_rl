@@ -173,12 +173,16 @@ class DoomAgentMainWindow(QMainWindow):
     self.input_screenbuf_tensor = screenbuf_tensor.to(DEVICE).unsqueeze_(0)
     DoomAgentMainWindow._update_label_image_from_screenbuf(self.input_img_label, screenbuf_tensor)
     # Run the input screen buffer through the Doom VAE network and show what the encoded to decoded output looks like 
-    output_screenbuf_tensors = self.doom_vae.generate(
+    
+    #output_screenbuf_tensors = self.doom_vae.generate(
+    output_screenbuf_tensors, _ = self.doom_vae( 
       self.input_screenbuf_tensor.expand(len(self.output_img_labels)+1,*screenbuf_tensor.shape)
     )
     for i in range(len(self.output_img_labels)):
       DoomAgentMainWindow._update_label_image_from_screenbuf(self.output_img_labels[i], output_screenbuf_tensors[i])
-    DoomAgentMainWindow._update_label_image_from_screenbuf(self.output_img_label, output_screenbuf_tensors[0])
+    #DoomAgentMainWindow._update_label_image_from_screenbuf(self.output_img_label, output_screenbuf_tensors[0])
+    mean_screenbuf_tensor, _ = self.doom_vae(self.input_screenbuf_tensor, False)
+    DoomAgentMainWindow._update_label_image_from_screenbuf(self.output_img_label, mean_screenbuf_tensor)
     
   @pyqtSlot()
   def update_lr(self):

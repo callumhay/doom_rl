@@ -40,3 +40,6 @@ viewer/testbed/classifier/checkpoints/
 viewer/testbed/vae/__pycache__/
 viewer/testbed/vae/_vizdoom.ini
 viewer/testbed/dreamerv2/
+viewer/testbed/doom_dreamer/checkpoints/
+viewer/testbed/doom_dreamer/wandb
+viewer/testbed/stable-diffusion/

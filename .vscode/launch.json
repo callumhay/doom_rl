@@ -14,10 +14,11 @@
       "type": "python",
       "request": "launch",
       "program": "${file}",
-      //"args": ["--checkpoint", "./testbed/checkpoints/doom_classifier.model"],
-      //"args": ["--n", "./checkpoints/doom_classifier.model"],
-
-      "args": ["--map", "E1M2"],
+      "args": [
+        "--map", "E1M2",
+        "--model", "./checkpoints/doom_model_2150000.chkpt",
+        "--epsilon", "0.88"
+      ],
       "cwd": "${fileDirname}",
       "console": "integratedTerminal",
       "justMyCode": true

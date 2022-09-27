@@ -1,4 +1,6 @@
 from typing import Tuple
+
+import torch
 import numpy as np 
 
 
@@ -24,7 +26,9 @@ class ReplayMemory():
 
   def add(self, observation: np.ndarray, action: np.ndarray, reward: float, done: bool):
     self.observation[self.idx] = observation
-    self.action[self.idx] = action 
+    self.action[self.idx] = action
+    #self.action[self.idx].fill(0)
+    #self.action[self.idx][action] = 1 
     self.reward[self.idx] = reward
     self.terminal[self.idx] = done
     self.idx = (self.idx + 1) % self.capacity
@@ -41,19 +45,19 @@ class ReplayMemory():
   def _sample_idx(self, seq_len: int):
     valid_idx = False
     while not valid_idx:
-        idx = np.random.randint(0, self.capacity if self.full else self.idx - seq_len)
-        idxs = np.arange(idx, idx + seq_len) % self.capacity
-        valid_idx = not self.idx in idxs[1:] 
+      idx = np.random.randint(0, self.capacity if self.full else self.idx - seq_len)
+      idxs = np.arange(idx, idx + seq_len) % self.capacity
+      valid_idx = not self.idx in idxs[1:] 
     return idxs
 
-  def _retrieve_batch(self, idxs: np.ndarray, n: int, l: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+  def _retrieve_batch(self, idxs: np.ndarray, batch_size: int, seq_len: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     vec_idxs = idxs.transpose().reshape(-1)
     observation = self.observation[vec_idxs]
     return (
-      observation.reshape(l, n, *self.observation_shape), 
-      self.action[vec_idxs].reshape(l, n, -1), 
-      self.reward[vec_idxs].reshape(l, n), 
-      self.terminal[vec_idxs].reshape(l, n)
+      observation.reshape(seq_len, batch_size, *self.observation_shape), 
+      self.action[vec_idxs].reshape(seq_len, batch_size, -1), 
+      self.reward[vec_idxs].reshape(seq_len, batch_size), 
+      self.terminal[vec_idxs].reshape(seq_len, batch_size)
     )
   
   def _shift_sequences(self, observations, actions, rewards, terminals):
