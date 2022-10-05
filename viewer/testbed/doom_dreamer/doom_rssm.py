@@ -51,6 +51,7 @@ class DoomRSSM(nn.Module):
         temporal_prior += [nn.Linear(hidden_size, self.stoch_size)]
     elif self.network_type == CONTINUOUS_NET_TYPE:
           temporal_prior += [nn.Linear(hidden_size, 2 * self.stoch_size)]
+    #temporal_prior += [activation_fn()]
     return nn.Sequential(*temporal_prior)
 
   def _build_temporal_posterior(self, info):
@@ -66,6 +67,7 @@ class DoomRSSM(nn.Module):
         temporal_posterior += [nn.Linear(hidden_size, self.stoch_size)]
     elif self.network_type == CONTINUOUS_NET_TYPE:
         temporal_posterior += [nn.Linear(hidden_size, 2 * self.stoch_size)]
+    #temporal_posterior += [activation_fn()]
     return nn.Sequential(*temporal_posterior)   
     
   def _build_embed_state_action(self, info):
@@ -74,13 +76,16 @@ class DoomRSSM(nn.Module):
     """
     activation_fn = info['activation_fn']
     return nn.Sequential(
-      nn.Linear(self.stoch_size + self.action_size, self.deter_size),
+      nn.Linear(self.stoch_size + self.action_size + 3 + 1, self.deter_size), # 3 for position, 1 for heading
       activation_fn()
     )
     
   
-  def imagine(self, prev_action:torch.Tensor, prev_state:RSSMState, non_terminal:torch.Tensor=True) -> RSSMState:
-    prev_state_action_embed = self.fc_embed_state_action(torch.cat([prev_state.stoch*non_terminal, prev_action], dim=-1))
+  def imagine(
+    self, prev_action:torch.Tensor, prev_pos:torch.Tensor, prev_heading:torch.Tensor,
+    prev_state:RSSMState, non_terminal:torch.Tensor=True
+  ) -> RSSMState:
+    prev_state_action_embed = self.fc_embed_state_action(torch.cat([prev_state.stoch*non_terminal, prev_action, prev_pos, prev_heading], dim=-1))
     deter_state = self.rnn(prev_state_action_embed, prev_state.deter*non_terminal)
 
     if self.network_type == DISCRETE_NET_TYPE:
@@ -98,8 +103,13 @@ class DoomRSSM(nn.Module):
     return prior_state
   
   
-  def observe(self, observation_embed:torch.Tensor, prev_action:torch.Tensor, prev_non_terminal:torch.Tensor, prev_state:RSSMState) -> Tuple[RSSMState, RSSMState]:
-    prior_state = self.imagine(prev_action, prev_state, prev_non_terminal)
+  def observe(
+    self, observation_embed:torch.Tensor, prev_action:torch.Tensor,  
+    prev_pos:torch.Tensor, prev_heading:torch.Tensor, prev_non_terminal:torch.Tensor, 
+    prev_state:RSSMState
+  ) -> Tuple[RSSMState, RSSMState]:
+    
+    prior_state = self.imagine(prev_action, prev_pos, prev_heading, prev_state, prev_non_terminal)
     deter_state = prior_state.deter
     x = torch.cat((deter_state, observation_embed), dim=-1) # NOTE: dim=-1 means concatenation happens along the last dim
     
@@ -119,14 +129,17 @@ class DoomRSSM(nn.Module):
   
   def rollout_observation(
     self, seq_len: int, observation_embed: torch.Tensor, 
-    action: torch.Tensor, nonterminals: torch.Tensor, prev_state:RSSMState
+    action: torch.Tensor, position: torch.Tensor, heading: torch.Tensor, 
+    nonterminals: torch.Tensor, prev_state:RSSMState
   ) -> Tuple[RSSMState, RSSMState]:
     priors = []
     posteriors = []
     for t in range(seq_len):
       prev_action = action[t]*nonterminals[t]
+      prev_pos = position[t]*nonterminals[t]
+      prev_heading = heading[t]*nonterminals[t]
       prior_state, posterior_state = self.observe(
-        observation_embed[t], prev_action, nonterminals[t], prev_state
+        observation_embed[t], prev_action, prev_pos, prev_heading, nonterminals[t], prev_state
       )
       priors.append(prior_state)
       posteriors.append(posterior_state)
@@ -136,14 +149,16 @@ class DoomRSSM(nn.Module):
     return prior, posterior
   
 
-  def rollout_imagination(self, horizon:int, actor:nn.Module, prev_state:RSSMState):
+  def rollout_imagination(self, horizon:int, actor:nn.Module, pos_ori_model:nn.Module, prev_state:RSSMState):
     curr_state = prev_state
     next_states = []
     action_entropys = []
     imagination_log_probs = []
     for _ in range(horizon):
-      action, action_distribution = actor((self.get_model_state(curr_state)).detach())
-      curr_state = self.imagine(action, curr_state)
+      temp_state = self.get_model_state(curr_state).detach()
+      action, action_distribution = actor(temp_state)
+      position_heading = pos_ori_model(temp_state)
+      curr_state = self.imagine(action, position_heading[:,0:3], position_heading[:,3:], curr_state)
       next_states.append(curr_state)
       action_entropys.append(action_distribution.entropy())
       imagination_log_probs.append(action_distribution.log_prob(torch.round(action.detach())))
@@ -156,16 +171,16 @@ class DoomRSSM(nn.Module):
   def init_state(self, batch_size) -> RSSMState:
     if self.network_type == DISCRETE_NET_TYPE:
       return RSSMDiscreteState(
-        torch.zeros(batch_size, self.stoch_size, dtype=torch.float16).to(self.device),
-        torch.zeros(batch_size, self.stoch_size, dtype=torch.float16).to(self.device),
-        torch.zeros(batch_size, self.deter_size, dtype=torch.float16).to(self.device),
+        torch.zeros(batch_size, self.stoch_size).to(self.device),
+        torch.zeros(batch_size, self.stoch_size).to(self.device),
+        torch.zeros(batch_size, self.deter_size).to(self.device),
       )
     elif self.network_type == CONTINUOUS_NET_TYPE:
       return RSSMContinuousState(
-        torch.zeros(batch_size, self.stoch_size, dtype=torch.float16).to(self.device),
-        torch.zeros(batch_size, self.stoch_size, dtype=torch.float16).to(self.device),
-        torch.zeros(batch_size, self.stoch_size, dtype=torch.float16).to(self.device),
-        torch.zeros(batch_size, self.deter_size, dtype=torch.float16).to(self.device),
+        torch.zeros(batch_size, self.stoch_size).to(self.device),
+        torch.zeros(batch_size, self.stoch_size).to(self.device),
+        torch.zeros(batch_size, self.stoch_size).to(self.device),
+        torch.zeros(batch_size, self.deter_size).to(self.device),
       )
   
   def get_model_state(self, state:RSSMState) -> RSSMState:

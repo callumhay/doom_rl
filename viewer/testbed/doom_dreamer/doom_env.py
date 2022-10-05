@@ -1,5 +1,6 @@
 from typing import Tuple
 
+import torch
 import torchvision.transforms.functional as torchvisfunc
 import numpy as np
 import vizdoom as vzd
@@ -10,16 +11,17 @@ from doom_reward_vars import DoomRewardVar, DoomPosRewardVar
 PREPROCESS_RES_H_W = (64,80) #(128,160) # Must be (H,W)!
 PREPROCESS_FINAL_SHAPE_C_H_W = (3, PREPROCESS_RES_H_W[0], PREPROCESS_RES_H_W[1])
 
+_frameskip = 4
+_living_reward = -0.01 / _frameskip
 _kill_reward  = 10.0
 _death_reward = -20.0
 _map_completed_reward = 1000.0
 
 class DoomEnv(object):
-  def __init__(self, map:str) -> None:
+  def __init__(self, map:str, episode_max_steps:int) -> None:
     self.map = map
-    self.episode_timeout = 999999999
-    self.frameskip = 4
-    
+    self.episode_timeout = episode_max_steps
+
     self.game = vzd.DoomGame()
     self.game.set_doom_game_path("../../../build/bin/doom.wad")
     self.game.set_doom_scenario_path("../../../build/bin/doom.wad")
@@ -38,6 +40,7 @@ class DoomEnv(object):
     self.game.set_render_effects_sprites(True)
     self.game.set_render_corpses(True)
     self.game.set_render_messages(False)
+    self.game.set_living_reward(_living_reward)
     
     self.game.set_screen_resolution(vzd.ScreenResolution.RES_320X256)
 
@@ -48,21 +51,21 @@ class DoomEnv(object):
     self.game.set_labels_buffer_enabled(True)
 
     self.actions = {
-      "MoveLeft"    : np.array([True,False,False,False,False,False,False,False]),
-      "MoveRight"   : np.array([False,True,False,False,False,False,False,False]),
-      "TurnLeft"    : np.array([False,False,True,False,False,False,False,False]),
-      "TurnRight"   : np.array([False,False,False,True,False,False,False,False]),
-      "Attack"      : np.array([False,False,False,False,True,False,False,False]),
-      "MoveForward" : np.array([False,False,False,False,False,True,False,False]),
-      "MoveBackward": np.array([False,False,False,False,False,False,True,False]),
-      "Use"         : np.array([False,False,False,False,False,False,False,True]),
+      #"MoveLeft"    : np.array([True,False,False,False,False,False,False,False]),
+      #"MoveRight"   : np.array([False,True,False,False,False,False,False,False]),
+      "TurnLeft"    : np.array([True,False,False,False,False,False]),
+      "TurnRight"   : np.array([False,True,False,False,False,False]),
+      "Attack"      : np.array([False,False,True,False,False,False]),
+      "MoveForward" : np.array([False,False,False,True,False,False]),
+      "MoveBackward": np.array([False,False,False,False,True,False]),
+      "Use"         : np.array([False,False,False,False,False,True]),
       
-      "NoAction"    : np.array([False,False,False,False,False,False,False,False]),
+      "NoAction"    : np.array([False,False,False,False,False,False]),
     }
     self.avail_action_keys = [k for k in self.actions.keys() if k != "NoAction"]
     self.game.set_available_buttons([
-      vzd.Button.MOVE_LEFT,
-      vzd.Button.MOVE_RIGHT,
+      #vzd.Button.MOVE_LEFT,
+      #vzd.Button.MOVE_RIGHT,
       vzd.Button.TURN_LEFT,
       vzd.Button.TURN_RIGHT,
       vzd.Button.ATTACK,
@@ -73,6 +76,7 @@ class DoomEnv(object):
     
     # Adds game variables that will be included in state (for calculating rewards)
     self.game.clear_available_game_variables()
+    self.game.add_available_game_variable(vzd.GameVariable.ANGLE)       # Player orientation angle
     self.game.add_available_game_variable(vzd.GameVariable.POSITION_X)
     self.game.add_available_game_variable(vzd.GameVariable.POSITION_Y)
     self.game.add_available_game_variable(vzd.GameVariable.POSITION_Z)
@@ -112,6 +116,21 @@ class DoomEnv(object):
   @property
   def action_size(self): return len(self.avail_action_keys)
 
+  def player_pos(self, normalize=True):
+    pos = np.array([
+      self.game.get_game_variable(vzd.GameVariable.POSITION_X),
+      self.game.get_game_variable(vzd.GameVariable.POSITION_Y),
+      self.game.get_game_variable(vzd.GameVariable.POSITION_Z),
+    ])
+    if normalize: pos /= 32000.0 # This is somewhat arbitrary, just want to keep the numbers in [0,1], preferably
+    return pos
+  
+  def player_heading(self):
+    # Return as a number in [0,1) where 0 is 0 degrees and 1 is 360 degrees
+    turns = self.game.get_game_variable(vzd.GameVariable.ANGLE) / 360.0 % 1.0
+    # TODO: What is this value?
+    return turns
+
   def is_episode_finished(self):
     return self.game.get_state() == None or self.game.is_episode_finished()
   
@@ -143,7 +162,7 @@ class DoomEnv(object):
     
     if any(action):
       try:
-        self.game.make_action(action, self.frameskip)
+        reward += self.game.make_action(action, _frameskip)
       except:
         exit(0)
     
@@ -153,13 +172,16 @@ class DoomEnv(object):
         reward += rv.update_and_calc_reward(self.game)
     
     if self.is_map_ended():
-      #print("Map was completed, nice!")
+      print("Map was completed, nice!")
       reward += _map_completed_reward
     if self.game.is_player_dead():
       #print("Agent died!")
       reward += _death_reward
+      
+    if state == None:
+      print("Game state was 'None', returning empty, terminal state.")
+      return torch.zeros(PREPROCESS_FINAL_SHAPE_C_H_W), reward, True
     
-    # TODO: observation, reward, done
     observation = DoomEnv.preprocess_screenbuffer(state.screen_buffer).numpy()
     return observation, reward, self.is_episode_finished()
 
@@ -167,13 +189,13 @@ class DoomEnv(object):
   def preprocess_screenbuffer(screenbuf):
     screenbuf = torchvisfunc.to_tensor(screenbuf)
     screenbuf = torchvisfunc.resize(screenbuf, PREPROCESS_RES_H_W)
-    #screenbuf = torchvisfunc.normalize(screenbuf, (0.485,0.456,0.406), (0.229,0.224,0.225))
+    screenbuf = torchvisfunc.normalize(screenbuf, (0.485,0.456,0.406), (0.229,0.224,0.225))
 
     #assert screenbuf.shape == PREPROCESS_FINAL_SHAPE_C_H_W
     #assert np.count_nonzero(np.isnan(screenbuf.numpy())) == 0
     return screenbuf
   
   def deprocess_screenbuffer(screenbuf_tensor):
-    #screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (0.,0.,0.), (1.0/0.229,1.0/0.224,1.0/0.225))
-    #screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (-0.485,-0.456,-0.406), (1.,1.,1.))
+    screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (0.,0.,0.), (1.0/0.229,1.0/0.224,1.0/0.225))
+    screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (-0.485,-0.456,-0.406), (1.,1.,1.))
     return screenbuf_tensor

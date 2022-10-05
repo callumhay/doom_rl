@@ -22,15 +22,15 @@ class Config():
   def model_savepath_str(self, train_steps:int) -> str: 
     return os.path.join(CHECKPOINT_DIR, f"doom_model_{train_steps}.chkpt")
   
-  capacity: int   = int(1e6)
+  capacity: int   = int(8e5)
   seq_len: int    = 50
   batch_size: int = 32
   
-  explore_steps: int = 5000   # Number of steps before training starts, used to seed the replay memory
-  train_episodes: int = 10000 # Number of episodes to train for
-  train_every_steps: int = 50 # Number of steps to take between training the network
-  save_every_steps: int = 5e4 # Number of steps to take between saves
-  collect_intervals: int = 3  # Number of training runs to take at every train_step for collecting metrics data
+  explore_steps: int     = 5000  # Number of steps before training starts, used to seed the replay memory
+  train_episodes: int    = 10000 # Number of episodes to train for
+  train_every_steps: int = 50    # Number of steps to take between training the network
+  save_every_steps: int  = 5e4   # Number of steps to take between saves
+  collect_intervals: int = 5     # Number of training runs to take at every train_step for collecting metrics data
   
   use_slow_target: float = True
   slow_target_update_steps: int = 100 # Number of steps to take between updates to the target network
@@ -42,6 +42,7 @@ class Config():
   
   kl_alpha: float = 0.8
   kl_loss_multiplier: float = 0.1
+  obs_kl_loss_multiplier: float = 0.00001
   discount_loss_multiplier: float = 5.0
   actor_entropy_scale: float = 1e-3
   
@@ -53,19 +54,23 @@ class Config():
   })
   
   rssm_info: Dict = field(default_factory=lambda:{
-    'type': DISCRETE_NET_TYPE, 'hidden_size': 1024, 
-    'deter_size':1024, 'stoch_size':512, 'class_size':32, 
-    'category_size':32, 'min_std':0.1, 'activation_fn': nn.ELU
+    'type': DISCRETE_NET_TYPE, 'hidden_size': 1824, 
+    'deter_size':2048, 'stoch_size':1024, 'class_size':34, 
+    'category_size':34, 'min_std':0.1, 'activation_fn': nn.ELU
   })
   actor_info: Dict = field(default_factory=lambda:{
-    'num_hidden_layers': 3, 'hidden_size': 640, 'activation_fn': nn.ELU
+    'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU
+  })
+  pos_ori_info: Dict = field(default_factory=lambda:{
+    'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU,
+    'distribution_type': NORMAL_DIST_TYPE
   })
   reward_info: Dict = field(default_factory=lambda:{
     'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU, 
     'distribution_type': NORMAL_DIST_TYPE
   })
   critic_info: Dict = field(default_factory=lambda:{
-    'num_hidden_layers': 3, 'hidden_size': 1152, 'activation_fn': nn.ELU, 
+    'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU, 
     'distribution_type': NORMAL_DIST_TYPE
   })
   discount_info: Dict = field(default_factory=lambda:{
@@ -74,7 +79,7 @@ class Config():
   })
   
   encoder_decoder_config: Dict = field(default_factory=lambda:{
-    'z_channels': 3, 'ch': 32, 'ch_mult': [ 1,2,3,4 ],
+    'z_channels': 4, 'ch': 32, 'ch_mult': [ 1,2,3,4 ],
     'num_res_blocks': 1, 'dropout': 0.0,
   })
 

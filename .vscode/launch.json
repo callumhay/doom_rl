@@ -15,9 +15,20 @@
       "request": "launch",
       "program": "${file}",
       "args": [
-        "--map", "E1M2",
-        "--model", "./checkpoints/doom_model_2150000.chkpt",
-        "--epsilon", "0.88"
+        "--map",
+        "E1M1",
+        //"--model",
+        //"./checkpoints/doom_model_900000.chkpt",
+        "--episode_max_steps",
+        "10000",
+        "--epsilon",
+        "1.0",
+        "--explore_steps",
+        "100000",
+        "--save_steps",
+        "100000",
+        "--num_episodes",
+        "1000000"
       ],
       "cwd": "${fileDirname}",
       "console": "integratedTerminal",

@@ -48,8 +48,10 @@ class DoomPosRewardVar(object):
     
     radius_diff = dist - self.curr_max_radius
     if radius_diff > 0:
-      reward += 0.001 * radius_diff
+      reward += 0.02 * radius_diff
       self.curr_max_radius = dist
+    else:
+      reward -= 0.01 # Smaller punishment for not exploring
       
     return reward
     

@@ -52,13 +52,13 @@ class DoomDiscreteActionModel(nn.Module):
     # Epsilon-greedy policy
     if np.random.uniform(0,1) < self.epsilon:
       idx = torch.randint(0, self.action_size, action.shape[:-1], device=action.device)
-      action = torch.zeros_like(action, device=action.device, dtype=torch.float16)
+      action = torch.zeros_like(action, device=action.device)
       action[:,idx] = 1
       
     return action
 
 class DoomDenseModel(nn.Module):
-  def __init__(self, output_shape: int, input_size: int, info: Dict) -> None:
+  def __init__(self, output_shape: int, input_size: int, info: Dict, end_activation=None) -> None:
     super().__init__()
     self.output_shape = output_shape
     self.distribution_type = info['distribution_type']
@@ -73,6 +73,8 @@ class DoomDenseModel(nn.Module):
         model += [nn.Linear(hidden_size, hidden_size)]
         model += [activation_fn()]
     model += [nn.Linear(hidden_size, int(np.prod(self.output_shape)))]
+    if end_activation != None:
+      model += [end_activation()]
     self.model = nn.Sequential(*model)
     
   def forward(self, x:torch.Tensor) -> torch.Tensor:
