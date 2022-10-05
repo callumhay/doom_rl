@@ -8,22 +8,44 @@ import torch.distributions as td
 
 import numpy as np
 
-from diagonal_gaussian_distribution import DiagonalGaussianDistribution
+#from nan_hook import nan_hook
 from replay_memory import ReplayMemory
 from doom_rssm import DoomRSSM, RSSMState
 from doom_models import DoomDenseModel, DoomDiscreteActionModel
 from sd_encode_decode import SDEncoder, SDDecoder
-from sd_reconstruction_loss import SDReconstructionLoss
 
 from config import Config, CONTINUOUS_NET_TYPE, DISCRETE_NET_TYPE
 from util import FreezeParameters, get_parameters
 
+class CPUScaler:
+  def update(self): pass
+  def step(self, optimizer): optimizer.step()
+  def scale(self, loss): return loss
+  def unscale_(self, optimizer): pass
+  
+  
+
 class DoomTrainer:
-  def __init__(self, config: Config, device: torch.device) -> None:
+  def __init__(self, config: Config, device: torch.device, nan_check=True, autocast_enabled=True) -> None:
     self.device = device
     self.config = config
+    self.autocast_enabled = autocast_enabled
+    self.scaler = torch.cuda.amp.GradScaler() if device.type == "cuda" else CPUScaler()
     self._model_init(config)
     self._optimizer_init(config)
+    '''
+    if nan_check:
+      def add_nan_hooks(model):
+        for submodule in model.modules(): submodule.register_forward_hook(nan_hook)
+      add_nan_hooks(self.observation_encoder)
+      add_nan_hooks(self.observation_decoder)
+      add_nan_hooks(self.rssm)
+      add_nan_hooks(self.pos_ori_model)
+      add_nan_hooks(self.action_model)
+      add_nan_hooks(self.reward_decoder)
+      add_nan_hooks(self.value_model)
+      add_nan_hooks(self.discount_model)
+    '''
     
   def _model_init(self, config: Config):
     observation_shape = config.observation_shape
@@ -52,15 +74,17 @@ class DoomTrainer:
       modelstate_size=modelstate_size
     ).to(self.device)
     
-    self.reconst_loss = SDReconstructionLoss().to(self.device)
+    #self.reconst_loss = SDReconstructionLoss().to(self.device)
     embedding_size = self.observation_decoder.embedding_size
+    full_embed_size = embedding_size+4
     
-    print(f"Stochastic size of    {stoch_size}")
-    print(f"Deterministic size of {deter_size}")
-    print(f"Modelstate size of    {modelstate_size}.")
-    print(f"Embedding shape of    {self.observation_decoder.embedding_shape} => {embedding_size} size.")
+    print(f"Stochastic size of         {stoch_size}")
+    print(f"Deterministic size of      {deter_size}")
+    print(f"Modelstate size of         {modelstate_size}")
+    print(f"Observation embed shape of {self.observation_decoder.embedding_shape} => {embedding_size} size.")
+    print(f"Embed size of              {full_embed_size}")
     
-    self.rssm = DoomRSSM(action_size, embedding_size, self.device, config.rssm_info).to(self.device)
+    self.rssm = DoomRSSM(action_size, full_embed_size, self.device, config.rssm_info).to(self.device)
     self.action_model = DoomDiscreteActionModel(action_size, deter_size, stoch_size, config.actor_info, config.epsilon_info).to(self.device)
     self.pos_ori_model = DoomDenseModel((4,), modelstate_size, config.pos_ori_info).to(self.device)
     self.reward_decoder = DoomDenseModel((1,), modelstate_size, config.reward_info).to(self.device)
@@ -89,17 +113,24 @@ class DoomTrainer:
     
   def initial_exploration(self, env) -> None:
     observation, done = env.reset(), False
+    position = env.player_pos()
+    heading = env.player_heading()
+    
     for _ in range(self.config.explore_steps):
       action = env.random_action()
       next_observation, reward, done = env.step(action)
-      pos = env.player_pos()
-      heading = env.player_heading()
+      next_position = env.player_pos()
+      next_heading  = env.player_heading()
       if done:
-        self.replay_memory.add(observation, action, pos, heading, reward, done)
+        self.replay_memory.add(observation, action, position, heading, reward, done)
         observation, done = env.reset(), False
+        position = env.player_pos()
+        heading = env.player_heading()
       else:
-        self.replay_memory.add(observation, action, pos, heading, reward, done)
+        self.replay_memory.add(observation, action, position, heading, reward, done)
         observation = next_observation
+        position = next_position
+        heading = next_heading
   
   def update_target(self):
     mix = self.config.slow_target_fraction if self.config.use_slow_target else 1
@@ -124,7 +155,7 @@ class DoomTrainer:
       "value_model": self.value_model.state_dict(),
       "discount_model": self.discount_model.state_dict(),
       "pos_ori_model": self.pos_ori_model.state_dict(),
-      "reconst_loss": self.reconst_loss.state_dict(),
+      #"reconst_loss": self.reconst_loss.state_dict(),
     }
     
   def _attempt_load_state_dict(model, saved_dict_data,  model_name):
@@ -140,7 +171,7 @@ class DoomTrainer:
     DoomTrainer._attempt_load_state_dict(self.rssm, saved_dict["rssm"], "RSSM")
     DoomTrainer._attempt_load_state_dict(self.observation_encoder, saved_dict["observation_encoder"], "Observation Encoder")
     DoomTrainer._attempt_load_state_dict(self.observation_decoder, saved_dict["observation_decoder"], "Observation Decoder")
-    DoomTrainer._attempt_load_state_dict(self.reconst_loss, saved_dict["reconst_loss"], "Loss Model")
+    #DoomTrainer._attempt_load_state_dict(self.reconst_loss, saved_dict["reconst_loss"], "Loss Model")
     DoomTrainer._attempt_load_state_dict(self.reward_decoder, saved_dict["reward_decoder"], "Reward Decoder")
     DoomTrainer._attempt_load_state_dict(self.action_model, saved_dict["action_model"], "Action Model")
     DoomTrainer._attempt_load_state_dict(self.discount_model, saved_dict["discount_model"], "Discount Model")
@@ -153,7 +184,6 @@ class DoomTrainer:
     
     model_losses = []
     kl_losses = []
-    observation_kl_losses = []
     reward_losses = []
     observation_losses = []
     pos_ori_losses = []
@@ -169,29 +199,40 @@ class DoomTrainer:
     
     for _ in range(self.config.collect_intervals):
       observations, actions, positions, headings, rewards, terminals = self.replay_memory.sample()
-      observations = torch.tensor(observations).to(self.device)              # t   to t+seq_len 
-      actions      = torch.tensor(actions).to(self.device)                   # t-1 to t+seq_len-1
-      positions    = torch.tensor(positions).to(self.device)                 # t   to t+seq_len 
-      headings     = torch.tensor(headings).to(self.device).unsqueeze(-1)    # t   to t+seq_len 
-      rewards      = torch.tensor(rewards).to(self.device).unsqueeze(-1)     # t-1 to t+seq_len-1
-      nonterminals = torch.tensor(1-terminals).to(self.device).unsqueeze(-1) # t-1 to t+seq_len-1
-      
-      with torch.autocast(self.device.type):
-        model_loss, kl_loss, observation_kl_loss, observation_loss, pos_ori_loss, reward_loss, discount_loss, prior_dist, posterior_dist, posterior = self.representation_loss(observations, actions, positions, headings, rewards, nonterminals)
+      observations = torch.tensor(observations, dtype=torch.float32).to(self.device)              # t   to t+seq_len 
+      actions      = torch.tensor(actions, dtype=torch.float32).to(self.device)                   # t-1 to t+seq_len-1
+      positions    = torch.tensor(positions, dtype=torch.float32).to(self.device)                 # t   to t+seq_len 
+      headings     = torch.tensor(headings, dtype=torch.float32).to(self.device).unsqueeze(-1)    # t   to t+seq_len 
+      rewards      = torch.tensor(rewards, dtype=torch.float32).to(self.device).unsqueeze(-1)     # t-1 to t+seq_len-1
+      nonterminals = torch.tensor(1-terminals, dtype=torch.float32).to(self.device).unsqueeze(-1) # t-1 to t+seq_len-1
       
       self.world_model_optimizer.zero_grad()
-      model_loss.backward()
-      self.world_model_optimizer.step()
+      with torch.autocast(self.device.type, enabled=self.autocast_enabled):
+        model_loss, kl_loss, observation_loss, pos_ori_loss, reward_loss, discount_loss, prior_dist, posterior_dist, posterior = \
+          self.representation_loss(observations, actions, positions, headings, rewards, nonterminals)
       
-      with torch.autocast(self.device.type):
-        actor_loss, value_loss, target_info = self._actor_critic_loss(posterior)
+      self.scaler.scale(model_loss).backward(retain_graph=True)
+      self.scaler.unscale_(self.world_model_optimizer)
+      torch.nn.utils.clip_grad_norm_(get_parameters(self.world_models), self.config.grad_clip)
+
+      self.scaler.step(self.world_model_optimizer)
       
       self.actor_model_optimizer.zero_grad()
       self.value_model_optimizer.zero_grad()
-      actor_loss.backward()
-      value_loss.backward()
-      self.actor_model_optimizer.step()
-      self.value_model_optimizer.step()
+      with torch.autocast(self.device.type, enabled=self.autocast_enabled):
+        actor_loss, value_loss, target_info = self._actor_critic_loss(posterior)
+      
+      self.scaler.scale(actor_loss).backward(retain_graph=True)
+      self.scaler.scale(value_loss).backward()
+      self.scaler.unscale_(self.actor_model_optimizer)
+      self.scaler.unscale_(self.value_model_optimizer)
+      torch.nn.utils.clip_grad_norm_(get_parameters(self.actor_models), self.config.grad_clip)
+      torch.nn.utils.clip_grad_norm_(get_parameters(self.value_models), self.config.grad_clip)
+      
+      self.scaler.step(self.actor_model_optimizer)
+      self.scaler.step(self.value_model_optimizer)
+      
+      self.scaler.update() # Only call this once, after all optimizer steps
       
       with torch.no_grad():
         prior_entropy = torch.mean(prior_dist.entropy())
@@ -199,7 +240,6 @@ class DoomTrainer:
         
       model_losses.append(model_loss.item())
       kl_losses.append(kl_loss.item())
-      observation_kl_losses.append(observation_kl_loss.item())
       reward_losses.append(reward_loss.item())
       observation_losses.append(observation_loss.item())
       pos_ori_losses.append(pos_ori_loss.item())
@@ -217,7 +257,6 @@ class DoomTrainer:
     # Return a clusterfuck of training metrics
     train_metrics['model_loss']        = np.mean(model_losses)
     train_metrics['kl_loss']           = np.mean(kl_losses)
-    train_metrics['obs_kl_loss']       = np.mean(observation_kl_losses)
     train_metrics['reward_loss']       = np.mean(reward_losses)
     train_metrics['observation_loss']  = np.mean(observation_losses)
     train_metrics['pos_ori_loss']      = np.mean(pos_ori_losses)
@@ -238,28 +277,22 @@ class DoomTrainer:
     self, observations:torch.Tensor, actions:torch.Tensor, positions:torch.Tensor, 
     headings:torch.Tensor, rewards:torch.Tensor, nonterminals:torch.Tensor
   ):
-    
-    encoded_obs_dist = DiagonalGaussianDistribution(
-      self.observation_encoder(observations), chunk_dim=2
-    )
-    embedded_observation = encoded_obs_dist.embedding(flatten_dim=2)
+    # Full embeded state of observations includes the pixel embed and the 
+    embedded_pos_oris     = torch.cat((positions, headings), dim=-1)
+    embedded_observations = torch.cat((torch.flatten(self.observation_encoder(observations), 2), positions, headings), dim=-1)
 
     prev_state = self.rssm.init_state(self.config.batch_size)
     prior, posterior = self.rssm.rollout_observation(
-      self.config.seq_len, embedded_observation, actions, positions, headings, nonterminals, prev_state
+      self.config.seq_len, embedded_observations, actions, nonterminals, prev_state
     )
     post_modelstate = self.rssm.get_model_state(posterior)
     
-    reconstructions = self.observation_decoder(post_modelstate[:-1])
-    observation_loss = self.reconst_loss.reconstruction_nll_loss(observations[:-1], reconstructions)
+    obs_dist = td.Independent(td.Normal(self.observation_decoder(post_modelstate[:-1]), 1), 3)
+    observation_loss = -torch.mean(obs_dist.log_prob(observations[:-1]))
     
-    observation_kl_loss = encoded_obs_dist.kl()
-    observation_kl_loss = torch.sum(observation_kl_loss) / np.prod(observation_kl_loss.shape[:-3])
-    
-    #pos_ori_dist = self.pos_ori_model.get_distribution(post_modelstate[:-1])
-    pos_ori_cat = torch.cat((positions[:-1], headings[:-1]), dim=-1)
-    pos_ori_loss = torch.nn.functional.mse_loss(self.pos_ori_model(post_modelstate[:-1]), pos_ori_cat, reduction='sum')
-    #pos_ori_loss = -torch.mean(pos_ori_dist.log_prob(pos_ori_cat))
+    pos_ori_dist = self.pos_ori_model.get_distribution(post_modelstate[:-1])
+    pos_ori_loss = -torch.mean(pos_ori_dist.log_prob(embedded_pos_oris[:-1]))
+    #pos_ori_loss = torch.nn.functional.mse_loss(self.pos_ori_model(post_modelstate[:-1]), pos_ori_cat, reduction='sum')
     
     reward_dist = self.reward_decoder.get_distribution(post_modelstate[:-1])
     reward_loss = self._reward_loss(reward_dist, rewards[1:])
@@ -269,11 +302,11 @@ class DoomTrainer:
     
     prior_dist, posterior_dist, kl_loss = self._kl_loss(prior, posterior)
     
-    model_loss = self.config.kl_loss_multiplier * kl_loss + self.config.obs_kl_loss_multiplier * observation_kl_loss + pos_ori_loss + reward_loss + observation_loss + self.config.discount_loss_multiplier * discount_loss
+    model_loss = self.config.kl_loss_multiplier * kl_loss  + pos_ori_loss + reward_loss + observation_loss + self.config.discount_loss_multiplier * discount_loss
     return (
-      model_loss, kl_loss, observation_kl_loss, observation_loss, pos_ori_loss,
+      model_loss, kl_loss, observation_loss, pos_ori_loss,
       reward_loss, discount_loss, prior_dist, 
-      posterior_dist, posterior#, reconstructions
+      posterior_dist, posterior
     )
      
   def _kl_loss(self, prior: RSSMState, posterior: RSSMState) -> Tuple[td.Independent, td.Independent, torch.Tensor]:
@@ -296,36 +329,35 @@ class DoomTrainer:
     return -torch.mean(discount_dist.log_prob(nonterminals.float()))
   
   def _actor_critic_loss(self, posterior:RSSMState):
-    with torch.autocast(self.device.type):
-      with torch.no_grad():
-        batched_posterior = self.rssm.detach_state(self.rssm.state_seq_to_batch(posterior, self.config.seq_len-1))
-      with FreezeParameters(self.world_models):
-        imagined_states, imagined_log_prob, policy_entropy = self.rssm.rollout_imagination(
-          self.config.horizon, self.action_model, self.pos_ori_model, batched_posterior
-        )
-    
-      imagined_modelstates = self.rssm.get_model_state(imagined_states)
-      with FreezeParameters(self.world_models + self.value_models + [self.target_value_model] + [self.discount_model]):
-        imagined_reward_dist = self.reward_decoder.get_distribution(imagined_modelstates)
-        imagined_reward = imagined_reward_dist.mean
-        imagined_value_dist = self.target_value_model.get_distribution(imagined_modelstates)
-        imagined_value = imagined_value_dist.mean
-        discount_dist  = self.discount_model.get_distribution(imagined_modelstates)
-        discount_values = self.config.discount * torch.round(discount_dist.base_dist.probs)
-
-      actor_loss, discount, lambda_returns = self._actor_loss(
-        imagined_reward, imagined_value, discount_values, imagined_log_prob, policy_entropy
+    with torch.no_grad():
+      batched_posterior = self.rssm.detach_state(self.rssm.state_seq_to_batch(posterior, self.config.seq_len-1))
+    with FreezeParameters(self.world_models):
+      imagined_states, imagined_log_prob, policy_entropy = self.rssm.rollout_imagination(
+        self.config.horizon, self.action_model, batched_posterior
       )
-      value_loss = self._value_loss(imagined_modelstates, discount, lambda_returns)
-      
-      mean_target = torch.mean(lambda_returns, dim=1)
-      target_info = {
-        'min_target' : torch.min(mean_target).item(),
-        'max_target' : torch.max(mean_target).item(),
-        'std_target' : torch.std(mean_target).item(),
-        'mean_target': torch.mean(mean_target).item(),
-      }
+  
+    imagined_modelstates = self.rssm.get_model_state(imagined_states)
+    with FreezeParameters(self.world_models + self.value_models + [self.target_value_model] + [self.discount_model]):
+      imagined_reward_dist = self.reward_decoder.get_distribution(imagined_modelstates)
+      imagined_reward = imagined_reward_dist.mean
+      imagined_value_dist = self.target_value_model.get_distribution(imagined_modelstates)
+      imagined_value = imagined_value_dist.mean
+      discount_dist  = self.discount_model.get_distribution(imagined_modelstates)
+      discount_values = self.config.discount * torch.round(discount_dist.base_dist.probs)
+
+    actor_loss, discount, lambda_returns = self._actor_loss(
+      imagined_reward, imagined_value, discount_values, imagined_log_prob, policy_entropy
+    )
+    value_loss = self._value_loss(imagined_modelstates, discount, lambda_returns)
     
+    mean_target = torch.mean(lambda_returns, dim=1)
+    target_info = {
+      'min_target' : torch.min(mean_target).item(),
+      'max_target' : torch.max(mean_target).item(),
+      'std_target' : torch.std(mean_target).item(),
+      'mean_target': torch.mean(mean_target).item(),
+    }
+  
     return actor_loss, value_loss, target_info
   
   def _actor_loss(self, imagined_reward, imagined_value, discount_values, imagined_log_prob, policy_entropy):  
@@ -337,7 +369,7 @@ class DoomTrainer:
     objective = imagined_log_prob[1:].unsqueeze(-1) * advantage
     
     discount_values = torch.cat([torch.ones_like(discount_values[:1]), discount_values[1:]])
-    discount = torch.cumprod(discount_values[:-1], dim=0, dtype=torch.float16)
+    discount = torch.cumprod(discount_values[:-1], dim=0, dtype=torch.float32)
     policy_entropy = policy_entropy[1:].unsqueeze(-1)
     actor_loss = -torch.sum(torch.mean(discount * (objective + self.config.actor_entropy_scale * policy_entropy), dim=1))
     return actor_loss, discount, lambda_returns

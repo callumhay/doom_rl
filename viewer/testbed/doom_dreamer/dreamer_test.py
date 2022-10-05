@@ -1,17 +1,15 @@
 import argparse
 import datetime
 import os
+#os.environ['KMP_DUPLICATE_LIB_OK']='True'
 
 import wandb
 import torch
-from torchsummary import summary
+#from torchsummary import summary
 import numpy as np
-import pandas as pd
 
 from config import Config, CHECKPOINT_DIR
 from doom_env import DoomEnv, PREPROCESS_FINAL_SHAPE_C_H_W
-from diagonal_gaussian_distribution import DiagonalGaussianDistribution
-
 from doom_trainer import DoomTrainer
 
 def main(args):
@@ -19,12 +17,14 @@ def main(args):
   
   start_time = datetime.datetime.now()
   start_time_str = start_time.strftime("%m-%d-%Y_%H:%M:%S")
-  
+  autocast_enabled = True
   if torch.cuda.is_available() and args.device == 'cuda':
     device = torch.device('cuda')
     torch.cuda.manual_seed(args.seed)
   else:
     device = torch.device('cpu')
+    torch.backends.cudnn.enabled = False
+    autocast_enabled = False
     
   #torch.autograd.set_detect_anomaly(True)
   
@@ -63,7 +63,7 @@ def main(args):
   )
   config.epsilon_info['start_epsilon'] = args.epsilon
   
-  trainer = DoomTrainer(config, device)
+  trainer = DoomTrainer(config, device, args.nan_check, autocast_enabled)
   if model_dict != None:
     trainer.load_save_dict(model_dict)
  
@@ -80,10 +80,11 @@ def main(args):
       
       done = False
       observation, score = env.reset(), 0
+      position = env.player_pos()
+      heading  = env.player_heading()
+      
       episode_actor_entopys = []
       prev_action = torch.zeros(1, env.action_size, device=device)
-      prev_position = torch.zeros(1, 3, device=device)
-      prev_heading = torch.zeros(1, 1, device=device)
       prev_state = trainer.rssm.init_state(1)
       
       while not done:
@@ -97,14 +98,15 @@ def main(args):
           trainer.save_model(train_steps, episode)
         
         # Choose the next action based on the state of the current network and a epsilon greedy policy
-        with torch.autocast(device.type):
+        with torch.autocast(device.type, enabled=autocast_enabled):
           with torch.no_grad():
-            encoded_obs_dist = DiagonalGaussianDistribution(
-              trainer.observation_encoder(torch.tensor(observation, device=device).unsqueeze(0)),
-              chunk_dim=1
-            )
-            observation_embed = encoded_obs_dist.embedding(flatten_dim=1)
-            _, posterior_state = trainer.rssm.observe(observation_embed, prev_action, prev_position, prev_heading, not done, prev_state)
+            observation_embed = torch.cat((
+              torch.flatten(trainer.observation_encoder(torch.tensor(observation, device=device).unsqueeze(0)), 1),
+              torch.tensor(position, device=device).unsqueeze(0), 
+              torch.tensor([heading], device=device).unsqueeze(0)
+            ), dim=-1).to(dtype=torch.float32)
+            
+            _, posterior_state = trainer.rssm.observe(observation_embed, prev_action, not done, prev_state)
             modelstate = trainer.rssm.get_model_state(posterior_state)
             action, action_dist = trainer.action_model(modelstate)
             action = trainer.action_model.add_exploration(action).detach()
@@ -112,18 +114,21 @@ def main(args):
             episode_actor_entopys.append(action_entropy)
       
         next_observation, reward, done = env.step(action.squeeze(0).cpu().numpy())
+        next_position = env.player_pos()
+        next_heading  = env.player_heading()
         score += reward
         
-        position = env.player_pos()
-        heading  = env.player_heading()
-        trainer.replay_memory.add(observation, action.squeeze(0).detach().cpu().numpy(), position, heading, reward, done)
+        trainer.replay_memory.add(
+          observation, action.squeeze(0).detach().cpu().numpy(), 
+          position, heading, reward, done
+        )
 
         if not done:
           observation = next_observation
+          position = next_position
+          heading  = next_heading
           prev_state  = posterior_state
           prev_action = action
-          prev_position = torch.tensor(position, dtype=torch.float32, device=device).unsqueeze(0)
-          prev_heading  = torch.tensor([heading], dtype=torch.float32, device=device).unsqueeze(0)
       
       total_score += score
       train_metrics['total_reward']  = total_score
@@ -150,6 +155,7 @@ if __name__ =="__main__":
   parser.add_argument('--explore_steps', type=int, default=5000, help='Exploration steps to take before training')
   parser.add_argument('--save_steps', type=int, default=50000, help='Interval of steps to take before saving the models')
   parser.add_argument('--num_episodes', type=int, default=10000, help="Number of episodes")
+  parser.add_argument('--nan_check', type=bool, default=True, help="Check for NaN/Inf in forward passes")
   parser.add_argument("--map", type=str, default="E1M1", help="The doom map name to play/train on")
   
   args = parser.parse_args()

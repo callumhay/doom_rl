@@ -189,13 +189,11 @@ class DoomEnv(object):
   def preprocess_screenbuffer(screenbuf):
     screenbuf = torchvisfunc.to_tensor(screenbuf)
     screenbuf = torchvisfunc.resize(screenbuf, PREPROCESS_RES_H_W)
-    screenbuf = torchvisfunc.normalize(screenbuf, (0.485,0.456,0.406), (0.229,0.224,0.225))
+    #screenbuf = torchvisfunc.normalize(screenbuf, (0.485,0.456,0.406), (0.229,0.224,0.225))
 
-    #assert screenbuf.shape == PREPROCESS_FINAL_SHAPE_C_H_W
-    #assert np.count_nonzero(np.isnan(screenbuf.numpy())) == 0
     return screenbuf
   
   def deprocess_screenbuffer(screenbuf_tensor):
-    screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (0.,0.,0.), (1.0/0.229,1.0/0.224,1.0/0.225))
-    screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (-0.485,-0.456,-0.406), (1.,1.,1.))
+    #screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (0.,0.,0.), (1.0/0.229,1.0/0.224,1.0/0.225))
+    #screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (-0.485,-0.456,-0.406), (1.,1.,1.))
     return screenbuf_tensor

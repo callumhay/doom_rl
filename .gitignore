@@ -43,3 +43,5 @@ viewer/testbed/dreamerv2/
 viewer/testbed/doom_dreamer/checkpoints/
 viewer/testbed/doom_dreamer/wandb
 viewer/testbed/stable-diffusion/
+viewer/testbed/doom_dreamer/ViZDoom/
+viewer/testbed/doom_dreamer/_vizdoom.ini

@@ -37,14 +37,15 @@ class Config():
   slow_target_fraction: float = 1.00
   
   horizon: int = 10
-  discount: float = 0.99
-  td_lambda: float = 0.99
+  discount: float = 0.999
+  td_lambda: float = 0.95
   
   kl_alpha: float = 0.8
   kl_loss_multiplier: float = 0.1
-  obs_kl_loss_multiplier: float = 0.00001
+  #obs_kl_loss_multiplier: float = 0.00001
   discount_loss_multiplier: float = 5.0
   actor_entropy_scale: float = 1e-3
+  grad_clip: float = 100.0
   
   epsilon_info: Dict = field(default_factory=lambda:{
     'start_epsilon': 1.0, 'epsilon_decay_multiplier': 0.9999998, 'min_epsilon': 0.05
@@ -62,7 +63,7 @@ class Config():
     'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU
   })
   pos_ori_info: Dict = field(default_factory=lambda:{
-    'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU,
+    'num_hidden_layers': 1, 'hidden_size': 1024, 'activation_fn': nn.ELU,
     'distribution_type': NORMAL_DIST_TYPE
   })
   reward_info: Dict = field(default_factory=lambda:{

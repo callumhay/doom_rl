@@ -76,16 +76,15 @@ class DoomRSSM(nn.Module):
     """
     activation_fn = info['activation_fn']
     return nn.Sequential(
-      nn.Linear(self.stoch_size + self.action_size + 3 + 1, self.deter_size), # 3 for position, 1 for heading
+      nn.Linear(self.stoch_size + self.action_size, self.deter_size),
       activation_fn()
     )
     
   
   def imagine(
-    self, prev_action:torch.Tensor, prev_pos:torch.Tensor, prev_heading:torch.Tensor,
-    prev_state:RSSMState, non_terminal:torch.Tensor=True
+    self, prev_action:torch.Tensor, prev_state:RSSMState, non_terminal:torch.Tensor=True
   ) -> RSSMState:
-    prev_state_action_embed = self.fc_embed_state_action(torch.cat([prev_state.stoch*non_terminal, prev_action, prev_pos, prev_heading], dim=-1))
+    prev_state_action_embed = self.fc_embed_state_action(torch.cat([prev_state.stoch*non_terminal, prev_action], dim=-1))
     deter_state = self.rnn(prev_state_action_embed, prev_state.deter*non_terminal)
 
     if self.network_type == DISCRETE_NET_TYPE:
@@ -105,11 +104,10 @@ class DoomRSSM(nn.Module):
   
   def observe(
     self, observation_embed:torch.Tensor, prev_action:torch.Tensor,  
-    prev_pos:torch.Tensor, prev_heading:torch.Tensor, prev_non_terminal:torch.Tensor, 
-    prev_state:RSSMState
+    prev_non_terminal:torch.Tensor, prev_state:RSSMState
   ) -> Tuple[RSSMState, RSSMState]:
     
-    prior_state = self.imagine(prev_action, prev_pos, prev_heading, prev_state, prev_non_terminal)
+    prior_state = self.imagine(prev_action, prev_state, prev_non_terminal)
     deter_state = prior_state.deter
     x = torch.cat((deter_state, observation_embed), dim=-1) # NOTE: dim=-1 means concatenation happens along the last dim
     
@@ -129,17 +127,14 @@ class DoomRSSM(nn.Module):
   
   def rollout_observation(
     self, seq_len: int, observation_embed: torch.Tensor, 
-    action: torch.Tensor, position: torch.Tensor, heading: torch.Tensor, 
-    nonterminals: torch.Tensor, prev_state:RSSMState
+    action: torch.Tensor, nonterminals: torch.Tensor, prev_state:RSSMState
   ) -> Tuple[RSSMState, RSSMState]:
     priors = []
     posteriors = []
     for t in range(seq_len):
       prev_action = action[t]*nonterminals[t]
-      prev_pos = position[t]*nonterminals[t]
-      prev_heading = heading[t]*nonterminals[t]
       prior_state, posterior_state = self.observe(
-        observation_embed[t], prev_action, prev_pos, prev_heading, nonterminals[t], prev_state
+        observation_embed[t], prev_action, nonterminals[t], prev_state
       )
       priors.append(prior_state)
       posteriors.append(posterior_state)
@@ -149,7 +144,7 @@ class DoomRSSM(nn.Module):
     return prior, posterior
   
 
-  def rollout_imagination(self, horizon:int, actor:nn.Module, pos_ori_model:nn.Module, prev_state:RSSMState):
+  def rollout_imagination(self, horizon:int, actor:nn.Module, prev_state:RSSMState):
     curr_state = prev_state
     next_states = []
     action_entropys = []
@@ -157,8 +152,7 @@ class DoomRSSM(nn.Module):
     for _ in range(horizon):
       temp_state = self.get_model_state(curr_state).detach()
       action, action_distribution = actor(temp_state)
-      position_heading = pos_ori_model(temp_state)
-      curr_state = self.imagine(action, position_heading[:,0:3], position_heading[:,3:], curr_state)
+      curr_state = self.imagine(action, curr_state)
       next_states.append(curr_state)
       action_entropys.append(action_distribution.entropy())
       imagination_log_probs.append(action_distribution.log_prob(torch.round(action.detach())))
