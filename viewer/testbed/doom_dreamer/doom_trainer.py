@@ -199,15 +199,16 @@ class DoomTrainer:
     
     for _ in range(self.config.collect_intervals):
       observations, actions, positions, headings, rewards, terminals = self.replay_memory.sample()
-      observations = torch.tensor(observations, dtype=torch.float32).to(self.device)              # t   to t+seq_len 
-      actions      = torch.tensor(actions, dtype=torch.float32).to(self.device)                   # t-1 to t+seq_len-1
-      positions    = torch.tensor(positions, dtype=torch.float32).to(self.device)                 # t   to t+seq_len 
-      headings     = torch.tensor(headings, dtype=torch.float32).to(self.device).unsqueeze(-1)    # t   to t+seq_len 
-      rewards      = torch.tensor(rewards, dtype=torch.float32).to(self.device).unsqueeze(-1)     # t-1 to t+seq_len-1
-      nonterminals = torch.tensor(1-terminals, dtype=torch.float32).to(self.device).unsqueeze(-1) # t-1 to t+seq_len-1
-      
+
       self.world_model_optimizer.zero_grad()
       with torch.autocast(self.device.type, enabled=self.autocast_enabled):
+        observations = torch.tensor(observations).to(self.device)              # t   to t+seq_len 
+        actions      = torch.tensor(actions).to(self.device)                   # t-1 to t+seq_len-1
+        positions    = torch.tensor(positions).to(self.device)                 # t   to t+seq_len 
+        headings     = torch.tensor(headings).to(self.device).unsqueeze(-1)    # t   to t+seq_len 
+        rewards      = torch.tensor(rewards).to(self.device).unsqueeze(-1)     # t-1 to t+seq_len-1
+        nonterminals = torch.tensor(1-terminals).to(self.device).unsqueeze(-1) # t-1 to t+seq_len-1
+        
         model_loss, kl_loss, observation_loss, pos_ori_loss, reward_loss, discount_loss, prior_dist, posterior_dist, posterior = \
           self.representation_loss(observations, actions, positions, headings, rewards, nonterminals)
       
@@ -287,12 +288,14 @@ class DoomTrainer:
     )
     post_modelstate = self.rssm.get_model_state(posterior)
     
-    obs_dist = td.Independent(td.Normal(self.observation_decoder(post_modelstate[:-1]), 1), 3)
+    obs_mean = self.observation_decoder(post_modelstate[:-1])
+    obs_dist = td.Independent(td.Normal(obs_mean, 1), 3)
     observation_loss = -torch.mean(obs_dist.log_prob(observations[:-1]))
+    #observation_loss = nn.functional.mse_loss(obs_mean, observations[:-1], reduction='sum')
     
     pos_ori_dist = self.pos_ori_model.get_distribution(post_modelstate[:-1])
     pos_ori_loss = -torch.mean(pos_ori_dist.log_prob(embedded_pos_oris[:-1]))
-    #pos_ori_loss = torch.nn.functional.mse_loss(self.pos_ori_model(post_modelstate[:-1]), pos_ori_cat, reduction='sum')
+    #pos_ori_loss = nn.functional.mse_loss(self.pos_ori_model(post_modelstate[:-1]), embedded_pos_oris[:-1], reduction='sum')
     
     reward_dist = self.reward_decoder.get_distribution(post_modelstate[:-1])
     reward_loss = self._reward_loss(reward_dist, rewards[1:])
@@ -369,7 +372,7 @@ class DoomTrainer:
     objective = imagined_log_prob[1:].unsqueeze(-1) * advantage
     
     discount_values = torch.cat([torch.ones_like(discount_values[:1]), discount_values[1:]])
-    discount = torch.cumprod(discount_values[:-1], dim=0, dtype=torch.float32)
+    discount = torch.cumprod(discount_values[:-1], dim=0, dtype=torch.float16)
     policy_entropy = policy_entropy[1:].unsqueeze(-1)
     actor_loss = -torch.sum(torch.mean(discount * (objective + self.config.actor_entropy_scale * policy_entropy), dim=1))
     return actor_loss, discount, lambda_returns

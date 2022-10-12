@@ -55,32 +55,32 @@ class Config():
   })
   
   rssm_info: Dict = field(default_factory=lambda:{
-    'type': DISCRETE_NET_TYPE, 'hidden_size': 1824, 
-    'deter_size':2048, 'stoch_size':1024, 'class_size':34, 
-    'category_size':34, 'min_std':0.1, 'activation_fn': nn.ELU
+    'type': DISCRETE_NET_TYPE, 'hidden_size': 1280, 
+    'deter_size':1280, 'stoch_size':768, 'class_size':32, 
+    'category_size':32, 'min_std':0.1, 'activation_fn': nn.ELU
   })
   actor_info: Dict = field(default_factory=lambda:{
-    'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU
+    'num_hidden_layers': 3, 'hidden_size': 896, 'activation_fn': nn.ELU
   })
   pos_ori_info: Dict = field(default_factory=lambda:{
-    'num_hidden_layers': 1, 'hidden_size': 1024, 'activation_fn': nn.ELU,
+    'num_hidden_layers': 2, 'hidden_size': 512, 'activation_fn': nn.ELU,
     'distribution_type': NORMAL_DIST_TYPE
   })
   reward_info: Dict = field(default_factory=lambda:{
-    'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU, 
+    'num_hidden_layers': 3, 'hidden_size': 896, 'activation_fn': nn.ELU, 
     'distribution_type': NORMAL_DIST_TYPE
   })
   critic_info: Dict = field(default_factory=lambda:{
-    'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU, 
+    'num_hidden_layers': 3, 'hidden_size': 896, 'activation_fn': nn.ELU, 
     'distribution_type': NORMAL_DIST_TYPE
   })
   discount_info: Dict = field(default_factory=lambda:{
-    'num_hidden_layers': 3, 'hidden_size': 1024, 'activation_fn': nn.ELU, 
+    'num_hidden_layers': 3, 'hidden_size': 512, 'activation_fn': nn.ELU, 
     'distribution_type': BINARY_DIST_TYPE
   })
   
   encoder_decoder_config: Dict = field(default_factory=lambda:{
-    'z_channels': 4, 'ch': 32, 'ch_mult': [ 1,2,3,4 ],
+    'z_channels': 3, 'ch': 32, 'ch_mult': [ 1,2,2,2 ],
     'num_res_blocks': 1, 'dropout': 0.0,
   })
 

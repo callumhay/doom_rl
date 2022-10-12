@@ -45,3 +45,4 @@ viewer/testbed/doom_dreamer/wandb
 viewer/testbed/stable-diffusion/
 viewer/testbed/doom_dreamer/ViZDoom/
 viewer/testbed/doom_dreamer/_vizdoom.ini
+viewer/testbed/doom_ppo/runs/

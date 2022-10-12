@@ -11,6 +11,7 @@ import numpy as np
 from config import Config, CHECKPOINT_DIR
 from doom_env import DoomEnv, PREPROCESS_FINAL_SHAPE_C_H_W
 from doom_trainer import DoomTrainer
+from doom_evaluator import DoomEvaluator
 
 def main(args):
   os.makedirs(CHECKPOINT_DIR, exist_ok=True) # Setup checkpoints directory
@@ -62,6 +63,11 @@ def main(args):
     csv_filepath=csv_filepath,
   )
   config.epsilon_info['start_epsilon'] = args.epsilon
+  
+  if args.eval:
+    evaluator = DoomEvaluator(config, device)
+    evaluator.eval_saved_agent(env, model_dict, args.num_episodes)
+    return
   
   trainer = DoomTrainer(config, device, args.nan_check, autocast_enabled)
   if model_dict != None:
@@ -157,6 +163,7 @@ if __name__ =="__main__":
   parser.add_argument('--num_episodes', type=int, default=10000, help="Number of episodes")
   parser.add_argument('--nan_check', type=bool, default=True, help="Check for NaN/Inf in forward passes")
   parser.add_argument("--map", type=str, default="E1M1", help="The doom map name to play/train on")
+  parser.add_argument("--eval", type=bool, default=False, help="Whether to just evaluate the agent")
   
   args = parser.parse_args()
   

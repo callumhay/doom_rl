@@ -10,29 +10,44 @@
       "cwd": "${workspaceFolder}/build"
     },
     {
-      "name": "Python: Current File",
+      "name": "Python: Doom Dreamer",
       "type": "python",
       "request": "launch",
       "program": "${file}",
       "args": [
         "--map",
         "E1M1",
-        //"--model",
-        //"./checkpoints/doom_model_900000.chkpt",
+        "--model",
+        "./checkpoints/doom_model_2750000.chkpt",
         "--episode_max_steps",
         "10000",
         "--epsilon",
-        "1.0",
+        "0.95",
         "--explore_steps",
-        "100000",
+        "1000",
         "--save_steps",
-        "100000",
+        "50000",
         "--num_episodes",
         "1000000"
       ],
       "cwd": "${fileDirname}",
       "console": "integratedTerminal",
-      "justMyCode": true
+      "justMyCode": false
+    },
+    {
+      "name": "Python: Doom PPO",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "args": [
+        "--map",
+        "E1M2",
+        //"--model",
+        //"./runs/doom_ppo_1_1665525371/doom_ppo_agent_4800000.chkpt",
+      ],
+      "cwd": "${fileDirname}",
+      "console": "integratedTerminal",
+      "justMyCode": false
     },
     {
       "name": "Attach to DoomRL",
@@ -93,6 +108,13 @@
           "ignoreFailures": true
         }
       ]
+    },
+    {
+      "name": "Dynamic Python: File",
+      "type": "python",
+      "request": "launch",
+      "program": "${file}",
+      "justMyCode": true
     }
   ]
 }
