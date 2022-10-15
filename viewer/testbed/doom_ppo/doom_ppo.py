@@ -15,22 +15,12 @@ from doom_agent import DoomAgent
 from doom_env import DoomEnv, PREPROCESS_FINAL_SHAPE_C_H_W
 from env_vec import EnvVec
 
-def _attempt_load_state_dict(model, saved_dict_data, model_name):
-  try:
-    model.load_state_dict(saved_dict_data, strict=False)
-  except RuntimeError as e:
-    print("Could not load " + model_name + ":")
-    print(e)
-    return False
-  return True
-
-
 def parse_args():
   parser = argparse.ArgumentParser()
   parser.add_argument("--model", type=str, default=None, help="Preexisting model to load (.chkpt file)")
   parser.add_argument("--learning-rate", type=float, default=2.5e-4,
     help="Learning rate of the optimizer")
-  parser.add_argument("--save-timesteps", type=int, default=100000, help="Timesteps between network saves")
+  parser.add_argument("--save-timesteps", type=int, default=50000, help="Timesteps between network saves")
   parser.add_argument("--total-timesteps", type=int, default=100000000, help="Total timesteps of all training")
   parser.add_argument("--seed", type=int, default=1, help="RNG seed")
   parser.add_argument("--torch-deterministic", type=lambda x:bool(strtobool(x)), 
@@ -38,11 +28,23 @@ def parse_args():
   parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?",
     const=True, help="If toggled, this experiment will be tracked with Weights and Biases")
   
-  # Gameplay specific args
+  # Network specific args
+  parser.add_argument("--net-output-size", type=int, default=3072, help="Output size of the convolutional network, input size to the LSTM")
+  parser.add_argument("--lstm-hidden-size", type=int, default=1024, help="Hidden size of the LSTM")
+  parser.add_argument("--classifier-num-hidden", type=int, default=0, help="Number of hidden layers for the classifier network")
+  parser.add_argument("--classifier-hidden-size", type=int, default=512, help="Number of nodes in each hidden layer for the classifier network")
+  #parser.add_argument("--actor-critic-num-hidden", type=int, default=1, help="Number of hidden layers for the actor and critic networks")
+  #parser.add_argument("--actor-critic-hidden-size", type=int, default=1024, help="Number of nodes in each hidden layer for the actor and critic networks")
+  parser.add_argument("--conv-channels", type=str, default="32,64,64", help="Set of output channels of the conv2d network")
+  parser.add_argument("--conv-kernels", type=str, default="8,4,3", help="Set of kernel sizes of the conv2d network")
+  parser.add_argument("--conv-strides", type=str, default="4,2,1", help="Set of stride sizes of the conv2d network")
+  parser.add_argument("--conv-paddings", type=str, default="0,0,0", help="Set of padding sizes of the conv2d network")
+  
+  # Game specific args
   parser.add_argument("--map", type=str, default="E1M1", help="Map(s) to load for play/training")
   
   # Algorithm specific args
-  parser.add_argument("--num-envs", type=int, default=8, help="The number of parallel game environments") # Implement this and change to 4?
+  parser.add_argument("--num-envs", type=int, default=32, help="The number of parallel game environments") # Implement this and change to 4?
   parser.add_argument("--num-steps", type=int, default=128, help="The number of steps per policy rollout")
   parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
     help="Toggle learning rate annealing for the policy and value networks")
@@ -51,7 +53,7 @@ def parse_args():
   parser.add_argument("--gamma", type=float, default=0.99, help="The discount factor gamma")
   parser.add_argument("--gae-lambda", type=float, default=0.95,
       help="The lambda for the general advantage estimation")
-  parser.add_argument("--num-minibatches", type=int, default=4, help="The number of mini-batches")
+  parser.add_argument("--num-minibatches", type=int, default=8, help="The number of mini-batches")
   parser.add_argument("--update-epochs", type=int, default=4, help="The K epochs to update the policy")
   parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
         help="Toggles advantages normalization")
@@ -67,6 +69,12 @@ def parse_args():
   args = parser.parse_args()
   args.batch_size = int(args.num_envs * args.num_steps)
   args.minibatch_size = int(args.batch_size // args.num_minibatches)
+  args.conv_channels = [int(item) for item in args.conv_channels.split(',')]
+  args.conv_kernels  = [int(item) for item in args.conv_kernels.split(',')]
+  args.conv_strides  = [int(item) for item in args.conv_strides.split(',')]
+  args.conv_paddings = [int(item) for item in args.conv_paddings.split(',')]
+  args.resolution_shape = PREPROCESS_FINAL_SHAPE_C_H_W
+  
   return args
 
 if __name__ == "__main__":
@@ -99,7 +107,7 @@ if __name__ == "__main__":
 
   # Setup the vizdoom environment wrapper, agent, optimizer
   envs = EnvVec([DoomEnv(args.map, 1000000, i == 0) for i in range(args.num_envs)])
-  agent = DoomAgent(envs.action_space()).to(device)
+  agent = DoomAgent(envs.action_space(), args).to(device)
   optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
   
   label_loss_crit = nn.BCEWithLogitsLoss()
@@ -133,6 +141,7 @@ if __name__ == "__main__":
     else:
       print(f"Could not find/load model file '{args.model}'")
   
+  cum_scores = np.zeros(args.num_envs, dtype=np.float64)
   start_time = time.time()
   raw_obs, raw_labels = envs.reset()
   next_obs    = torch.Tensor(raw_obs).to(device)
@@ -182,11 +191,13 @@ if __name__ == "__main__":
       next_labels = torch.Tensor(next_labels).to(device)
       next_done   = torch.Tensor(done).to(device)
     
-      for item in info:
+      for env_idx, item in enumerate(info):
         if "episode" in item.keys():
-          print(f"global_step={global_step}, episodic_return={item['episode']['r']}")
-          writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
-          writer.add_scalar("charts/episodic_length", item["episode"]["l"], global_step)
+          cum_scores[env_idx] += item["episode"]["r"]
+          print(f"env_idx={env_idx}, global_step={global_step}, episodic_return={item['episode']['r']}, cumulative_return={cum_scores[env_idx]}")
+          writer.add_scalar("charts/episodic_return",   item["episode"]["r"], global_step)
+          writer.add_scalar("charts/episodic_length",   item["episode"]["l"], global_step)
+          writer.add_scalar("charts/cumulative_return", cum_scores[env_idx],  global_step)
           break
     
     # Bootstrap value if not done

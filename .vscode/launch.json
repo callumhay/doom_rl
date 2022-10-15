@@ -42,8 +42,8 @@
       "args": [
         "--map",
         "E1M2",
-        //"--model",
-        //"./runs/doom_ppo_1_1665525371/doom_ppo_agent_4800000.chkpt",
+        "--model",
+        "./runs/doom_ppo_1_1665769868/doom_ppo_agent_35200000.chkpt"
       ],
       "cwd": "${fileDirname}",
       "console": "integratedTerminal",

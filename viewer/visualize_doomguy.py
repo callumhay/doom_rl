@@ -39,10 +39,9 @@ if __name__ == "__main__":
       state_dict = state_dict["agent"]
       #print(state_dict)
     weightKeys = [ k for k in state_dict.keys() if k.find('.weight') != -1 ]
-    print(weightKeys)
   
+  print(weightKeys)
   #biasKeys   = [ k for k in state_dict.keys() if k.find('.bias')   != -1 and k.find('conv2d') != -1 ]
-
   for w_key in weightKeys:
     #print(w_key)
     filter = state_dict[w_key].clone().cpu()

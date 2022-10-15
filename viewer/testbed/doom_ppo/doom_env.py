@@ -7,16 +7,16 @@ import random
 
 from doom_reward_vars import DoomRewardVar, DoomPosRewardVar
 
-PREPROCESS_RES_H_W = (128,160) #(64,80)# Must be (H,W)!
+PREPROCESS_RES_H_W = (128,72) # Must be (H,W)!
 PREPROCESS_FINAL_SHAPE_C_H_W = (3, PREPROCESS_RES_H_W[0], PREPROCESS_RES_H_W[1])
 
 NUM_LABEL_CLASSES = 256
 
 _frameskip = 4
-_living_reward = -0.01 / _frameskip
-_kill_reward  = 10.0
-_death_reward = -20.0
-_map_completed_reward = 1000.0
+_living_reward = 0.0 #-0.01 / _frameskip
+_kill_reward   = 1.0
+_death_reward  = -1.0
+_map_completed_reward = 10.0
 
 
 class DoomEnv(object):
@@ -44,7 +44,7 @@ class DoomEnv(object):
     self.game.set_render_messages(False)
     self.game.set_living_reward(_living_reward)
     
-    self.game.set_screen_resolution(vzd.ScreenResolution.RES_320X256)
+    self.game.set_screen_resolution(vzd.ScreenResolution.RES_256X144) #200x150 -> 100x75
 
     # Set cv2 friendly format.
     self.game.set_screen_format(vzd.ScreenFormat.RGB24)
@@ -93,13 +93,13 @@ class DoomEnv(object):
 
     
     # Reward functions (how we calculate the reward when specific game variables change)
-    health_reward_func     = lambda oldHealth, newHealth: 0.25 * (newHealth-oldHealth)
-    armor_reward_func      = lambda oldArmor, newArmor: (1.0 if newArmor > oldArmor else 0.0) * (newArmor-oldArmor)
-    item_reward_func       = lambda oldItemCount, newItemCount:  (newItemCount-oldItemCount) if newItemCount > oldItemCount else 0
-    secrets_reward_func    = lambda oldNumSecrets, newNumSecrets: 5 if newNumSecrets > oldNumSecrets else 0
-    dmg_reward_func        = lambda oldDmg, newDmg: 0.5*(newDmg-oldDmg) if newDmg > oldDmg else 0
-    kill_count_reward_func = lambda oldKillCount, newKillCount: _kill_reward if newKillCount > oldKillCount else 0
-    ammo_reward_func       = lambda oldAmmo, newAmmo: (1.0 if newAmmo > oldAmmo else 0.1) * (newAmmo-oldAmmo)
+    health_reward_func     = lambda oldHealth, newHealth: (0.02 if newHealth > oldHealth else 0.01) * (newHealth-oldHealth)
+    armor_reward_func      = lambda oldArmor, newArmor: (0.01 if newArmor > oldArmor else 0.0) * (newArmor-oldArmor)
+    item_reward_func       = lambda oldItemCount, newItemCount: 0.01*(newItemCount-oldItemCount) if newItemCount > oldItemCount else 0
+    secrets_reward_func    = lambda oldNumSecrets, newNumSecrets: 1.0 if newNumSecrets > oldNumSecrets else 0.0
+    dmg_reward_func        = lambda oldDmg, newDmg: 0.01*(newDmg-oldDmg) if newDmg > oldDmg else 0.0
+    kill_count_reward_func = lambda oldKillCount, newKillCount: _kill_reward*(newKillCount-oldKillCount) if newKillCount > oldKillCount else 0.0
+    ammo_reward_func       = lambda oldAmmo, newAmmo: (0.02 if newAmmo > oldAmmo else 0.01) * (newAmmo-oldAmmo)
     
     self.reward_vars = [
       DoomRewardVar(vzd.GameVariable.KILLCOUNT, "Kill count", kill_count_reward_func),

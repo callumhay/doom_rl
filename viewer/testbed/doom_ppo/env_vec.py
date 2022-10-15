@@ -16,7 +16,7 @@ class EnvVec(object):
   def observation_space(self):
     return PREPROCESS_FINAL_SHAPE_C_H_W
   def label_space(self):
-    return (NUM_LABEL_CLASSES)
+    return (NUM_LABEL_CLASSES,)
   
   def reset(self):
     obs = []

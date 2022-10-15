@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.distributions as td
 import numpy as np
 
-from doom_env import PREPROCESS_FINAL_SHAPE_C_H_W
+from doom_env import PREPROCESS_FINAL_SHAPE_C_H_W, NUM_LABEL_CLASSES
 
 '''
 # Original implementation of the network:
@@ -26,16 +26,16 @@ def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
   return layer
 
 class DoomAgent(nn.Module):
-  def __init__(self, action_space_size, num_classes=256):
+  def __init__(self, action_space_size, args):
     super(DoomAgent, self).__init__()
     
-    self.net_output_size = 4098#3072 # Original was 512
-    self.hidden_size     = 2048#1024 # Original was 128
+    net_output_size  = args.net_output_size # Original was 512
+    lstm_hidden_size = args.lstm_hidden_size     # Original was 128
     
-    out_channel_list = [32, 64,  64]
-    kernel_size_list = [9,   5,   3]
-    stride_list      = [3,   2,   1]
-    padding_list     = [1,   1,   1]
+    out_channel_list = args.conv_channels # Original was [32, 64, 64]
+    kernel_size_list = args.conv_kernels  # Original was [ 8,  4,  3]
+    stride_list      = args.conv_strides  # Original was [ 4,  2,  1]
+    padding_list     = args.conv_paddings # Original was [ 0,  0,  0]
     
     self.network = nn.Sequential()
     curr_channels, curr_height, curr_width = PREPROCESS_FINAL_SHAPE_C_H_W
@@ -54,17 +54,25 @@ class DoomAgent(nn.Module):
     conv_output_size = curr_width*curr_height*curr_channels
     
     self.network.append(nn.Flatten())
-    self.network.append(layer_init(nn.Linear(conv_output_size, self.net_output_size)))
+    self.network.append(layer_init(nn.Linear(conv_output_size, net_output_size)))
     
-    self.lstm = nn.LSTM(self.net_output_size, self.hidden_size)
+    self.lstm = nn.LSTM(net_output_size, lstm_hidden_size)
     for name, param in self.lstm.named_parameters():
       if "bias" in name: nn.init.constant_(param, 0)
       elif "weight" in name: nn.init.orthogonal_(param, 1.0)
         
-    self.actor      = layer_init(nn.Linear(self.hidden_size, action_space_size), std=0.01)
-    self.critic     = layer_init(nn.Linear(self.hidden_size, 1), std=1)
+    self.actor      = layer_init(nn.Linear(lstm_hidden_size, action_space_size), std=0.01)
+    self.critic     = layer_init(nn.Linear(lstm_hidden_size, 1), std=1)
     
-    self.classifier = layer_init(nn.Linear(self.net_output_size, num_classes), std=1)
+    # Classifier network init
+    curr_layer_input_size = net_output_size if args.classifier_num_hidden == 0 else args.classifier_hidden_size
+    self.classifier = nn.Sequential()
+    for _ in range(args.classifier_num_hidden):
+      self.classifier.append(layer_init(nn.Linear(curr_layer_input_size, args.classifier_hidden_size)))
+      self.classifier.append(nn.Tanh())
+      curr_layer_input_size = args.classifier_hidden_size 
+    self.classifier.append(layer_init(nn.Linear(curr_layer_input_size, NUM_LABEL_CLASSES)))
+    
 
   def get_states(self, x, lstm_state, done):
     hidden = self.network(x)
@@ -107,6 +115,7 @@ class DoomAgent(nn.Module):
       action = actor_dist.sample()
 
     classifier_logits = self.classifier(conv_output)
+    classifier_logits = classifier_logits.view(-1, classifier_logits.shape[-1])
     return action, actor_dist.log_prob(action), actor_dist.entropy(), self.critic(new_hidden), lstm_state, classifier_logits
 
       
