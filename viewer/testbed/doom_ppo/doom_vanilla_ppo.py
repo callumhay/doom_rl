@@ -46,7 +46,7 @@ def parse_args():
     parser.add_argument("--model", type=str, default="", help="Preexisting model to load (.chkpt file)")
     parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
         help="the name of this experiment")
-    parser.add_argument("--gym-id", type=str, default="VizdoomBasic-v0",
+    parser.add_argument("--gym-id", type=str, default="VizdoomBasicMoreActions-v0",
         help="the id of the gym environment")
     parser.add_argument("--learning-rate", type=float, default=2.5e-4,
         help="the learning rate of the optimizer")
@@ -120,7 +120,7 @@ def make_env(gym_id, seed, idx, capture_video, run_name):
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         env = MaxAndSkipEnv(env, skip=4)
         env = ClipRewardEnv(env)
-        env = RGBObservation(env, shape=(96,96))#(84,84))
+        env = RGBObservation(env, shape=(96,96))
         #env = gym.wrappers.ResizeObservation(env, (84, 84))
         #env = gym.wrappers.GrayScaleObservation(env)
         #env = gym.wrappers.FrameStack(env, 1)

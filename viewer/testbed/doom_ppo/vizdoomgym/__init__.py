@@ -4,6 +4,10 @@ register(
     id='VizdoomBasic-v0',
     entry_point='vizdoomgym.envs:VizdoomBasic'
 )
+register(
+    id='VizdoomBasicMoreActions-v0',
+    entry_point='vizdoomgym.envs:VizdoomBasicMoreActions'
+)
 
 register(
     id='VizdoomCorridor-v0',

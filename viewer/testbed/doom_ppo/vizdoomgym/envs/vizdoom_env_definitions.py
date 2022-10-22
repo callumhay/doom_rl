@@ -5,7 +5,6 @@ class VizdoomBasic(VizdoomEnv):
     def __init__(self, **kwargs):
         super(VizdoomBasic, self).__init__(0, **kwargs)
 
-
 class VizdoomCorridor(VizdoomEnv):
     def __init__(self, **kwargs):
         super(VizdoomCorridor, self).__init__(1, **kwargs)
@@ -49,3 +48,8 @@ class VizdoomPredictPosition(VizdoomEnv):
 class VizdoomTakeCover(VizdoomEnv):
     def __init__(self, **kwargs):
         super(VizdoomTakeCover, self).__init__(7, **kwargs)
+
+
+class VizdoomBasicMoreActions(VizdoomEnv):
+    def __init__(self, **kwargs):
+      super(VizdoomBasicMoreActions, self).__init__(10, **kwargs)
