@@ -13,13 +13,8 @@ from torchsummary import summary
 import numpy as np
 
 from PyQt6.QtCore import pyqtSlot, pyqtSignal, QObject, QThread
-
-
 import vizdoom as vzd
-
 from doom_env import DoomEnv, PREPROCESS_FINAL_SHAPE_C_H_W
-
-
 from sd_vae import SDVAE
 
 DEVICE_STR = "cuda" if torch.cuda.is_available() else "cpu"

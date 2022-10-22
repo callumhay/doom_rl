@@ -3,6 +3,18 @@ from typing import Callable
 import vizdoom as vzd
 import numpy as np
 
+
+class DoomReward(object):
+  
+  def __init__(self, reward_func) -> None:
+    self.reward_func = reward_func
+  
+  def reinit(self, game: vzd.DoomGame) -> None:
+    pass
+  
+  def update_and_calc_reward(self, game: vzd.DoomGame) -> float:
+    return self.reward_func(game)
+
 class DoomRewardVar(object):
   
   def __init__(self, var_type: vzd.GameVariable, desc: str, reward_func: Callable[[float,float],float]) -> None:
@@ -14,14 +26,14 @@ class DoomRewardVar(object):
   def reinit(self, game: vzd.DoomGame) -> None:
     self.curr_value = game.get_game_variable(self.var_type)
     
-  def update_and_calc_reward(self, game:vzd.DoomGame) -> float:
+  def update_and_calc_reward(self, env) -> float:
+    game = env.game
     new_value = game.get_game_variable(self.var_type)
     reward = 0.0
     if new_value != self.curr_value:
       reward = self.reward_func(self.curr_value, new_value)
       self.curr_value = new_value
     return reward
-  
   
 class DoomPosRewardVar(object):
   
@@ -41,7 +53,8 @@ class DoomPosRewardVar(object):
     self.curr_max_radius = 0.0
     self.init_xyz = self._curr_game_xyz(game)
     
-  def update_and_calc_reward(self, game:vzd.DoomGame) -> float:
+  def update_and_calc_reward(self, env) -> float:
+    game = env.game
     reward = 0.0
     curr_xyz = self._curr_game_xyz(game)
     dist = np.sqrt(np.sum((curr_xyz-self.init_xyz)**2))
@@ -50,8 +63,8 @@ class DoomPosRewardVar(object):
     if radius_diff > 0:
       reward += 0.02 * radius_diff
       self.curr_max_radius = dist
-    else:
-      reward -= 0.01 # Smaller punishment for not exploring
+    #else:
+    #  reward -= 0.01 # Smaller punishment for not exploring
       
     return reward
-    
+

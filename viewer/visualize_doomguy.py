@@ -37,6 +37,8 @@ if __name__ == "__main__":
     state_dict = torch.load(args.checkpoint)
     if "agent" in state_dict:
       state_dict = state_dict["agent"]
+    elif "vae" in state_dict:
+      state_dict = state_dict["vae"]
       #print(state_dict)
     weightKeys = [ k for k in state_dict.keys() if k.find('.weight') != -1 ]
   

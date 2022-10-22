@@ -17,8 +17,6 @@ class SDVAE(nn.Module):
     self.quant_conv = torch.nn.Conv2d(2*vae_config["z_channels"], 2*embed_dim, 1)
     self.post_quant_conv = torch.nn.Conv2d(embed_dim, vae_config["z_channels"], 1)
     self.embed_dim = embed_dim
-    if ckpt_path is not None:
-      self.init_from_ckpt(ckpt_path, ignore_keys=ignore_keys)
       
   def init_from_ckpt(self, path, ignore_keys=list()):
     sd = torch.load(path, map_location="cpu")["state_dict"]

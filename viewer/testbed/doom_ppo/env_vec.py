@@ -1,6 +1,6 @@
 from typing import List
 import numpy as np
-from doom_env import PREPROCESS_FINAL_SHAPE_C_H_W, NUM_LABEL_CLASSES, DoomEnv
+from doom_env import NUM_LABEL_CLASSES, DoomEnv
 
 
 class EnvVec(object):
@@ -11,11 +11,13 @@ class EnvVec(object):
     for env in self.envs:
       env.close()
   
-  def action_space(self):
+  def action_space_size(self):
     return self.envs[0].action_size
-  def observation_space(self):
-    return PREPROCESS_FINAL_SHAPE_C_H_W
-  def label_space(self):
+  
+  def observation_shape(self):
+    return self.envs[0].observation_shape()
+  
+  def label_shape(self):
     return (NUM_LABEL_CLASSES,)
   
   def reset(self):

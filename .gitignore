@@ -46,3 +46,7 @@ viewer/testbed/stable-diffusion/
 viewer/testbed/doom_dreamer/ViZDoom/
 viewer/testbed/doom_dreamer/_vizdoom.ini
 viewer/testbed/doom_ppo/runs/
+viewer/testbed/doom_ppo/_vizdoom/doom.wad
+viewer/testbed/doom_ppo/_vizdoom/doom2.wad
+viewer/testbed/ppo_vae/runs/
+viewer/testbed/doom_ppo/_old_runs/

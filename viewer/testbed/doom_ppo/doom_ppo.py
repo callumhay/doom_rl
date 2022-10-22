@@ -12,13 +12,13 @@ import torch.optim as optim
 from torch.utils.tensorboard import SummaryWriter
 
 from doom_agent import DoomAgent
-from doom_env import DoomEnv, PREPROCESS_FINAL_SHAPE_C_H_W
+from doom_env import DoomEnv, DEFAULT_PREPROCESS_FINAL_SHAPE
 from env_vec import EnvVec
 
 def parse_args():
   parser = argparse.ArgumentParser()
   parser.add_argument("--model", type=str, default=None, help="Preexisting model to load (.chkpt file)")
-  parser.add_argument("--learning-rate", type=float, default=2.5e-4,
+  parser.add_argument("--learning-rate", type=float, default=1e-4,
     help="Learning rate of the optimizer")
   parser.add_argument("--save-timesteps", type=int, default=50000, help="Timesteps between network saves")
   parser.add_argument("--total-timesteps", type=int, default=100000000, help="Total timesteps of all training")
@@ -29,23 +29,29 @@ def parse_args():
     const=True, help="If toggled, this experiment will be tracked with Weights and Biases")
   
   # Network specific args
-  parser.add_argument("--net-output-size", type=int, default=3072, help="Output size of the convolutional network, input size to the LSTM")
+  parser.add_argument("--net-output-size", type=int, default=4096, help="Output size of the convolutional network, input size to the LSTM")
   parser.add_argument("--lstm-hidden-size", type=int, default=1024, help="Hidden size of the LSTM")
-  parser.add_argument("--classifier-num-hidden", type=int, default=0, help="Number of hidden layers for the classifier network")
+  parser.add_argument("--use-classifier", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    help="Whether or not to use the classifier network")
+  parser.add_argument("--classifier-num-hidden", type=int, default=1, help="Number of hidden layers for the classifier network")
   parser.add_argument("--classifier-hidden-size", type=int, default=512, help="Number of nodes in each hidden layer for the classifier network")
-  #parser.add_argument("--actor-critic-num-hidden", type=int, default=1, help="Number of hidden layers for the actor and critic networks")
-  #parser.add_argument("--actor-critic-hidden-size", type=int, default=1024, help="Number of nodes in each hidden layer for the actor and critic networks")
+  parser.add_argument("--actor-critic-num-hidden", type=int, default=0, help="Number of hidden layers for the actor and critic networks")
+  parser.add_argument("--actor-critic-hidden-size", type=int, default=1024, help="Number of nodes in each hidden layer for the actor and critic networks")
   parser.add_argument("--conv-channels", type=str, default="32,64,64", help="Set of output channels of the conv2d network")
   parser.add_argument("--conv-kernels", type=str, default="8,4,3", help="Set of kernel sizes of the conv2d network")
   parser.add_argument("--conv-strides", type=str, default="4,2,1", help="Set of stride sizes of the conv2d network")
   parser.add_argument("--conv-paddings", type=str, default="0,0,0", help="Set of padding sizes of the conv2d network")
+  parser.add_argument("--use-labels-buffer", type=lambda x: bool(strtobool(x)), default=True,
+    help="Toggle use of the label buffer for in-game object identification to help the agent learn faster")
   
   # Game specific args
-  parser.add_argument("--map", type=str, default="E1M1", help="Map(s) to load for play/training")
+  parser.add_argument("--scenario-name", type=str, default="basic", help="Scenario (don't include '.wad') to load to train on.")
+  parser.add_argument("--map", type=str, default="map01", help="Map(s) to load for play/training")
+  parser.add_argument("--clip-reward", type=lambda x: bool(strtobool(x)), default=True, help="Clip each step's reward to -1, 0, or 1 (i.e., sign(reward)")
   
   # Algorithm specific args
   parser.add_argument("--num-envs", type=int, default=32, help="The number of parallel game environments") # Implement this and change to 4?
-  parser.add_argument("--num-steps", type=int, default=128, help="The number of steps per policy rollout")
+  parser.add_argument("--num-steps", type=int, default=256, help="The number of steps per policy rollout")
   parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
     help="Toggle learning rate annealing for the policy and value networks")
   parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -53,11 +59,11 @@ def parse_args():
   parser.add_argument("--gamma", type=float, default=0.99, help="The discount factor gamma")
   parser.add_argument("--gae-lambda", type=float, default=0.95,
       help="The lambda for the general advantage estimation")
-  parser.add_argument("--num-minibatches", type=int, default=8, help="The number of mini-batches")
-  parser.add_argument("--update-epochs", type=int, default=4, help="The K epochs to update the policy")
+  parser.add_argument("--num-minibatches", type=int, default=4, help="The number of mini-batches")
+  parser.add_argument("--update-epochs", type=int, default=8, help="The K epochs to update the policy")
   parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
         help="Toggles advantages normalization")
-  parser.add_argument("--clip-coef", type=float, default=0.1, help="The surrogate clipping coefficient")
+  parser.add_argument("--clip-coef", type=float, default=0.2, help="The surrogate clipping coefficient")
   parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
       help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
   parser.add_argument("--ent-coef", type=float, default=0.01, help="Coefficient of the entropy loss")
@@ -73,13 +79,13 @@ def parse_args():
   args.conv_kernels  = [int(item) for item in args.conv_kernels.split(',')]
   args.conv_strides  = [int(item) for item in args.conv_strides.split(',')]
   args.conv_paddings = [int(item) for item in args.conv_paddings.split(',')]
-  args.resolution_shape = PREPROCESS_FINAL_SHAPE_C_H_W
+  args.observation_shape = DEFAULT_PREPROCESS_FINAL_SHAPE
   
   return args
 
 if __name__ == "__main__":
   args = parse_args()
-  run_name = f"doom_ppo_{args.seed}_{int(time.time())}"
+  run_name = f"doom_ppo_{args.seed}_{args.scenario_name}_{int(time.time())}"
   if args.track:
     import wandb
     wandb.init(
@@ -106,15 +112,15 @@ if __name__ == "__main__":
   device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
   # Setup the vizdoom environment wrapper, agent, optimizer
-  envs = EnvVec([DoomEnv(args.map, 1000000, i == 0) for i in range(args.num_envs)])
-  agent = DoomAgent(envs.action_space(), args).to(device)
+  envs = EnvVec([DoomEnv(args, 1000000, i == 0) for i in range(args.num_envs)])
+  agent = DoomAgent(envs, args).to(device)
   optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
   
   label_loss_crit = nn.BCEWithLogitsLoss()
   
   # Storage setup
-  obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_space()).to(device)
-  labels = torch.zeros((args.num_steps, args.num_envs) + envs.label_space()).to(device)
+  obs = torch.zeros((args.num_steps, args.num_envs) + envs.observation_shape()).to(device)
+  labels = torch.zeros((args.num_steps, args.num_envs) + envs.label_shape()).to(device)
   actions = torch.zeros((args.num_steps, args.num_envs)).to(device)
   logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
   rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -145,7 +151,7 @@ if __name__ == "__main__":
   start_time = time.time()
   raw_obs, raw_labels = envs.reset()
   next_obs    = torch.Tensor(raw_obs).to(device)
-  next_labels = torch.Tensor(raw_labels).to(device)
+  #next_labels = torch.Tensor(raw_labels).to(device)
   next_done   = torch.zeros(args.num_envs).to(device)
   
   next_lstm_state = (
@@ -174,7 +180,7 @@ if __name__ == "__main__":
         torch.save(save_dict, save_path)
       
       obs[step]    = next_obs
-      labels[step] = next_labels
+      #labels[step] = next_labels
       dones[step]  = next_done
       
       # Action logic
@@ -188,7 +194,7 @@ if __name__ == "__main__":
       next_obs, next_labels, reward, done, info = envs.step(action.cpu().numpy())
       rewards[step] = torch.tensor(reward).to(device).view(-1)
       next_obs    = torch.Tensor(next_obs).to(device)
-      next_labels = torch.Tensor(next_labels).to(device)
+      #next_labels = torch.Tensor(next_labels).to(device)
       next_done   = torch.Tensor(done).to(device)
     
       for env_idx, item in enumerate(info):
@@ -230,8 +236,8 @@ if __name__ == "__main__":
         advantages = returns - values
         
     # Flatten the batch 
-    b_obs        = obs.reshape((-1,) + envs.observation_space())
-    b_labels     = labels.reshape((-1,) + envs.label_space())
+    b_obs        = obs.reshape((-1,) + envs.observation_shape())
+    #b_labels     = labels.reshape((-1,) + envs.label_shape())
     b_logprobs   = logprobs.reshape(-1)
     b_actions    = actions.reshape((-1,1))
     b_dones      = dones.reshape(-1)
@@ -288,13 +294,16 @@ if __name__ == "__main__":
           v_loss = 0.5 * ((newvalue - b_returns[mb_inds]) ** 2).mean()
         
         # Classification loss
-        c_loss = label_loss_crit(class_logits, b_labels[mb_inds])
+        #if class_logits is None:
+        #c_loss = 0
+        #else:
+        #  c_loss = label_loss_crit(class_logits, b_labels[mb_inds])
         
         # Entropy loss
         entropy_loss = entropy.mean()
         
         # Total loss
-        loss = pg_loss - args.ent_coef * entropy_loss + args.vf_coef * v_loss + args.cf_coef * c_loss
+        loss = pg_loss - args.ent_coef * entropy_loss + args.vf_coef * v_loss #+ args.cf_coef * c_loss
         
         optimizer.zero_grad()
         loss.backward()
@@ -312,14 +321,15 @@ if __name__ == "__main__":
     # Record rewards for plotting purposes
     writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
     writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
-    writer.add_scalar("losses/classification_loss", c_loss.item(), global_step)
+    #if args.use_classifier:
+    #  writer.add_scalar("losses/classification_loss", c_loss.item(), global_step)
     writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
     writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
     writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
     writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
     writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
     writer.add_scalar("losses/explained_variance", explained_var, global_step)
-    print("SPS:", int((global_step-init_step) / (time.time() - start_time)))
+    #print("SPS:", int((global_step-init_step) / (time.time() - start_time)))
     writer.add_scalar("charts/SPS", int(global_step / (time.time() - start_time)), global_step)
     
   envs.close()

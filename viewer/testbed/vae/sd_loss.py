@@ -12,18 +12,6 @@ class SDVAELoss(nn.Module):
     # output log variance
     self.logvar = nn.Parameter(torch.ones(size=()) * logvar_init)
     
-  def calculate_adaptive_weight(self, nll_loss, g_loss, last_layer=None):
-    if last_layer is not None:
-      nll_grads = torch.autograd.grad(nll_loss, last_layer, retain_graph=True)[0]
-      g_grads = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0]
-    else:
-      nll_grads = torch.autograd.grad(nll_loss, self.last_layer[0], retain_graph=True)[0]
-      g_grads = torch.autograd.grad(g_loss, self.last_layer[0], retain_graph=True)[0]
-
-    d_weight = torch.norm(nll_grads) / (torch.norm(g_grads) + 1e-4)
-    d_weight = torch.clamp(d_weight, 0.0, 1e4).detach()
-    return d_weight
-
   def forward(self, inputs, reconstructions, posteriors):
     rec_loss = torch.abs(inputs.contiguous() - reconstructions.contiguous())
     nll_loss = rec_loss / torch.exp(self.logvar) + self.logvar

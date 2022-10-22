@@ -1,36 +1,81 @@
+import os
 from typing import Tuple
 
 import torchvision.transforms.functional as torchvisfunc
 import numpy as np
+import scipy.ndimage
 import vizdoom as vzd
 import random
 
-from doom_reward_vars import DoomRewardVar, DoomPosRewardVar
+from doom_reward_vars import DoomReward, DoomRewardVar, DoomPosRewardVar
 
-PREPROCESS_RES_H_W = (128,72) # Must be (H,W)!
-PREPROCESS_FINAL_SHAPE_C_H_W = (3, PREPROCESS_RES_H_W[0], PREPROCESS_RES_H_W[1])
-
+DEFAULT_PREPROCESS_FINAL_SHAPE = (6, 75, 100)
 NUM_LABEL_CLASSES = 256
 
+_VIZDOOM_SCENARIO_PATH = "_vizdoom"
 _frameskip = 4
 _living_reward = 0.0 #-0.01 / _frameskip
-_kill_reward   = 1.0
-_death_reward  = -1.0
+_kill_reward   = 5.0
+_death_reward  = -5.0
 _map_completed_reward = 10.0
 
 
+_DOOM_BAD_STUFF_SET = set([
+  'ShotgunGuy','ChaingunGuy','BaronOfHell','Zombieman','DoomImp','Arachnotron','SpiderMastermind',
+  'Demon','Spectre','DoomImpBall','Cacodemon','Revenant','RevenantTracer',
+  'StealthArachnotron','StealthArchvile','StealthCacodemon',
+  'StealthChaingunGuy','StealthDemon','StealthDoomImp','StealthFatso','StealthRevenant',
+  'CacodemonBall','PainElemental','ArchvileFire',
+  'StealthBaron','StealthHellKnight','StealthZombieMan','StealthShotgunGuy',
+  'LostSoul','Archvile','Fatso','HellKnight','Cyberdemon','ArachnotronPlasma','BaronBall','FatShot'
+])
+_DOOM_GOOD_STUFF_SET = set([
+  'Stimpack', 'Medikit', 'Soulsphere', 'GreenArmor', 'BlueArmor', 'ArmorBonus',
+  'Megasphere', 'InvulnerabilitySphere', 'BlurSphere', 'Backpack', 'HealthBonus',
+  'RadSuit', 'BlueCard', 'RedCard', 'YellowCard', 'YellowSkull', 'RedSkull', 'BlueSkull',
+])
+_DOOM_WEAPON_STUFF_SET = set([
+  'Clip', 'Shell', 'Cell', 'ClipBox', 'RocketAmmo', 'RocketBox', 'CellPack', 'ShellBox',
+  'Shotgun','Chaingun','RocketLauncher','PlasmaRifle','BFG9000','Chainsaw','SuperShotgun',
+])
+
+def _get_label_type_id(label):
+  name = label.object_name
+  if name in _DOOM_BAD_STUFF_SET: return 1
+  elif name in _DOOM_GOOD_STUFF_SET: return 2
+  elif name in _DOOM_WEAPON_STUFF_SET: return 3
+  return None
+
 class DoomEnv(object):
-  def __init__(self, map:str, episode_max_steps:int, window_visible=True) -> None:
-    self.map = map
+  def __init__(self, args, episode_max_steps:int, window_visible=True, 
+               screen_res=vzd.ScreenResolution.RES_200X150, 
+               downsample_res_h=DEFAULT_PREPROCESS_FINAL_SHAPE[1], 
+               downsample_res_w=DEFAULT_PREPROCESS_FINAL_SHAPE[2]) -> None:
+    
+    self.use_labels_buffer = args.use_labels_buffer
     self.episode_timeout = episode_max_steps
+    self.clip_reward = args.clip_reward
+    self.preprocess_res = (downsample_res_h, downsample_res_w)
+    self.preprocess_final_shape = (6 if self.use_labels_buffer else 3, downsample_res_h, downsample_res_w)
 
     self.game = vzd.DoomGame()
-    self.game.set_doom_game_path("../../../build/bin/doom.wad")
-    self.game.set_doom_scenario_path("../../../build/bin/doom.wad")
-    self.game.set_doom_map(self.map)
+    
+    # Be sure to set these things before setting the scenario
+    # (so they can be overwritten by the scenario when necessary)
+    self.game.set_living_reward(_living_reward)
+    self.game.set_episode_timeout(self.episode_timeout)
+    
+    self.game.set_doom_game_path(os.path.join(_VIZDOOM_SCENARIO_PATH, "doom.wad"))#"../../../build/bin/doom.wad")
+    self.game.set_doom_scenario_path(os.path.join(_VIZDOOM_SCENARIO_PATH, args.scenario_name) + ".wad")#"../../../build/bin/doom.wad")
+    config_path = os.path.join(_VIZDOOM_SCENARIO_PATH, args.scenario_name) + ".cfg"
+    if os.path.exists(config_path): 
+      self.using_config = True
+      self.game.load_config(config_path)
+      
+    self.game.set_doom_map(args.map)
     self.game.set_mode(vzd.Mode.PLAYER)
     self.game.set_episode_start_time(10)
-    self.game.set_episode_timeout(self.episode_timeout)
+    
     #game.add_game_args("+freelook 1")
 
     # Use other config file if you wish.
@@ -42,29 +87,27 @@ class DoomEnv(object):
     self.game.set_render_effects_sprites(True)
     self.game.set_render_corpses(True)
     self.game.set_render_messages(False)
-    self.game.set_living_reward(_living_reward)
-    
-    self.game.set_screen_resolution(vzd.ScreenResolution.RES_256X144) #200x150 -> 100x75
 
-    # Set cv2 friendly format.
+    self.game.set_screen_resolution(screen_res) #200x150 -> 100x75
     self.game.set_screen_format(vzd.ScreenFormat.RGB24)
-
-    # Enables labeling of the in game objects.
-    self.game.set_labels_buffer_enabled(True)
+    self.game.set_depth_buffer_enabled(False) # Only using the colour buffer
+    if self.use_labels_buffer:
+      self.game.set_labels_buffer_enabled(True) # Enables labeling of the in game objects.
 
     self.actions = {
       #"MoveLeft"    : np.array([True,False,False,False,False,False,False,False]),
       #"MoveRight"   : np.array([False,True,False,False,False,False,False,False]),
-      "TurnLeft"    : np.array([True,False,False,False,False,False]),
-      "TurnRight"   : np.array([False,True,False,False,False,False]),
-      "Attack"      : np.array([False,False,True,False,False,False]),
-      "MoveForward" : np.array([False,False,False,True,False,False]),
-      "MoveBackward": np.array([False,False,False,False,True,False]),
-      "Use"         : np.array([False,False,False,False,False,True]),
+      "TurnLeft"    : np.array([True,False,False,False,False,False,True]),
+      "TurnRight"   : np.array([False,True,False,False,False,False,True]),
+      "Attack"      : np.array([False,False,True,False,False,False,True]),
+      "MoveForward" : np.array([False,False,False,True,False,False,True]),
+      "MoveBackward": np.array([False,False,False,False,True,False,True]),
+      "Use"         : np.array([False,False,False,False,False,True,True]),
       
-      "NoAction"    : np.array([False,False,False,False,False,False]),
+      "NoAction"    : np.array([False,False,False,False,False,False,False]),
     }
     self.avail_action_keys = [k for k in self.actions.keys() if k != "NoAction"]
+    self.game.clear_available_buttons()
     self.game.set_available_buttons([
       #vzd.Button.MOVE_LEFT,
       #vzd.Button.MOVE_RIGHT,
@@ -73,7 +116,8 @@ class DoomEnv(object):
       vzd.Button.ATTACK,
       vzd.Button.MOVE_FORWARD,
       vzd.Button.MOVE_BACKWARD,
-      vzd.Button.USE
+      vzd.Button.USE,
+      vzd.Button.SPEED
     ])
     
     # Adds game variables that will be included in state (for calculating rewards)
@@ -91,7 +135,6 @@ class DoomEnv(object):
     self.game.add_available_game_variable(vzd.GameVariable.AMMO2)       # Amount of ammo for the pistol
     #TODO: Other ammo variables... AMMO3, AMMO4, ... , AMMO9
 
-    
     # Reward functions (how we calculate the reward when specific game variables change)
     health_reward_func     = lambda oldHealth, newHealth: (0.02 if newHealth > oldHealth else 0.01) * (newHealth-oldHealth)
     armor_reward_func      = lambda oldArmor, newArmor: (0.01 if newArmor > oldArmor else 0.0) * (newArmor-oldArmor)
@@ -99,18 +142,26 @@ class DoomEnv(object):
     secrets_reward_func    = lambda oldNumSecrets, newNumSecrets: 1.0 if newNumSecrets > oldNumSecrets else 0.0
     dmg_reward_func        = lambda oldDmg, newDmg: 0.01*(newDmg-oldDmg) if newDmg > oldDmg else 0.0
     kill_count_reward_func = lambda oldKillCount, newKillCount: _kill_reward*(newKillCount-oldKillCount) if newKillCount > oldKillCount else 0.0
-    ammo_reward_func       = lambda oldAmmo, newAmmo: (0.02 if newAmmo > oldAmmo else 0.01) * (newAmmo-oldAmmo)
+    ammo_reward_func       = lambda oldAmmo, newAmmo: (0.02 if newAmmo > oldAmmo else 0.1) * (newAmmo-oldAmmo)
     
-    self.reward_vars = [
-      DoomRewardVar(vzd.GameVariable.KILLCOUNT, "Kill count", kill_count_reward_func),
-      DoomRewardVar(vzd.GameVariable.DAMAGECOUNT, "Monster/Environment damage", dmg_reward_func),
-      DoomRewardVar(vzd.GameVariable.SECRETCOUNT, "Secrets found", secrets_reward_func),
-      DoomRewardVar(vzd.GameVariable.HEALTH, "Player health", health_reward_func),
-      DoomRewardVar(vzd.GameVariable.ARMOR, "Player armor", armor_reward_func),
-      DoomRewardVar(vzd.GameVariable.ITEMCOUNT, "Item count", item_reward_func),
-      DoomRewardVar(vzd.GameVariable.AMMO2, "Pistol ammo count", ammo_reward_func),
-      DoomPosRewardVar(),
-    ]
+    map_complete_reward_func = lambda env: _map_completed_reward if env.is_map_ended() else 0.0
+    death_reward_func        = lambda env: _death_reward if env.game.is_player_dead() else 0.0
+    
+    if self.using_config:
+      self.reward_vars = []
+    else:
+      self.reward_vars = [
+        DoomReward(map_complete_reward_func),
+        DoomReward(death_reward_func),
+        DoomRewardVar(vzd.GameVariable.KILLCOUNT, "Kill count", kill_count_reward_func),
+        DoomRewardVar(vzd.GameVariable.DAMAGECOUNT, "Monster/Environment damage", dmg_reward_func),
+        DoomRewardVar(vzd.GameVariable.SECRETCOUNT, "Secrets found", secrets_reward_func),
+        DoomRewardVar(vzd.GameVariable.HEALTH, "Player health", health_reward_func),
+        DoomRewardVar(vzd.GameVariable.ARMOR, "Player armor", armor_reward_func),
+        DoomRewardVar(vzd.GameVariable.ITEMCOUNT, "Item count", item_reward_func),
+        DoomRewardVar(vzd.GameVariable.AMMO2, "Pistol ammo count", ammo_reward_func),
+        DoomPosRewardVar(),
+      ]
     
     self.next_step_reset = True
     self.curr_ep_return = 0.0
@@ -134,7 +185,6 @@ class DoomEnv(object):
   def player_heading(self):
     # Return as a number in [0,1) where 0 is 0 degrees and 1 is 360 degrees
     turns = self.game.get_game_variable(vzd.GameVariable.ANGLE) / 360.0 % 1.0
-    # TODO: What is this value?
     return turns
 
   def is_episode_finished(self):
@@ -155,11 +205,39 @@ class DoomEnv(object):
     labels[label_inds] = 1
     return labels
   
+  def labels_buffer(self, game_state):
+    _mapping = self.labels_array(game_state).astype(np.uint8)
+    labels_buf = (_mapping[game_state.labels_buffer] == 1).astype(np.uint8)
+    return labels_buf
+ 
+  # Create label buffers for good, bad and utility pixels on screen
+  # Returns a buffer of shape (3, unscaled_H, unscaled_W)
+  def labels_buffers(self, game_state):
+    _mapping = np.zeros((256,), dtype=np.uint8)
+    for label in game_state.labels:
+      type_id = _get_label_type_id(label)
+      if type_id is not None:
+        _mapping[label.value] = type_id
+    labels_bufs = -(_mapping[game_state.labels_buffer] == np.arange(1,4)[:,None,None]).astype(np.uint8) / 255.0
+    return labels_bufs
+ 
+  def get_observation(self, game_state):
+    obs_buf = self.preprocess_screenbuffer(game_state.screen_buffer).numpy()
+    if self.use_labels_buffer:
+      labelsbuf_obs = self.labels_buffers(game_state)
+      labelsbuf_obs = scipy.ndimage.zoom(labelsbuf_obs, [1.0, 0.5, 0.5], order=0)
+      #labelsbuf_obs = self.labels_buffer(game_state)
+      #labelsbuf_obs = np.expand_dims(scipy.ndimage.zoom(labelsbuf_obs, 0.5, order=0),0)
+      obs_buf = np.concatenate([obs_buf, labelsbuf_obs], 0)
+    return obs_buf
+  
+  def observation_shape(self):
+    return self.preprocess_final_shape
+  
   def reset(self) -> np.ndarray:
     if not self.game.is_running():
       return None
 
-    #self.game.set_doom_map(self.map)
     self.game.new_episode()
     state = self.game.get_state()
     
@@ -171,7 +249,7 @@ class DoomEnv(object):
     self.curr_ep_return = 0.0
     self.curr_ep_len = 0
     
-    observation = DoomEnv.preprocess_screenbuffer(state.screen_buffer).numpy()
+    observation = self.get_observation(state)
     return observation, self.labels_array(state)
 
   def step(self, action:np.ndarray) -> Tuple[np.ndarray,float,bool]:
@@ -195,15 +273,9 @@ class DoomEnv(object):
     # Calculate the sum of all in-game/gameplay rewards
     if state != None: 
       for rv in self.reward_vars: 
-        reward += rv.update_and_calc_reward(self.game)
+        reward += rv.update_and_calc_reward(self)
     
-    if self.is_map_ended():
-      print("Map was completed, nice!")
-      reward += _map_completed_reward
-    if self.game.is_player_dead():
-      #print("Agent died!")
-      reward += _death_reward
-    
+    reward = np.sign(reward) if self.clip_reward else reward
     self.curr_ep_return += reward
     self.curr_ep_len += 1
     
@@ -212,19 +284,12 @@ class DoomEnv(object):
     if done:
       self.next_step_reset = True
       info = {"episode": {"r": self.curr_ep_return, "l": self.curr_ep_len}}
-      
-    observation = DoomEnv.preprocess_screenbuffer(state.screen_buffer).numpy()
+    
+    observation = self.get_observation(state)
     return observation, self.labels_array(state), reward, done, info
 
 
-  def preprocess_screenbuffer(screenbuf):
+  def preprocess_screenbuffer(self, screenbuf):
     screenbuf = torchvisfunc.to_tensor(screenbuf)
-    screenbuf = torchvisfunc.resize(screenbuf, PREPROCESS_RES_H_W)
-    #screenbuf = torchvisfunc.normalize(screenbuf, (0.485,0.456,0.406), (0.229,0.224,0.225))
-
+    screenbuf = torchvisfunc.resize(screenbuf, self.preprocess_res)
     return screenbuf
-  
-  def deprocess_screenbuffer(screenbuf_tensor):
-    #screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (0.,0.,0.), (1.0/0.229,1.0/0.224,1.0/0.225))
-    #screenbuf_tensor = torchvisfunc.normalize(screenbuf_tensor, (-0.485,-0.456,-0.406), (1.,1.,1.))
-    return screenbuf_tensor
