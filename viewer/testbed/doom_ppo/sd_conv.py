@@ -43,7 +43,7 @@ class Downsample(nn.Module):
     return x
 
 class ResnetBlock(nn.Module):
-  def __init__(self, *, in_channels, out_channels=None, conv_shortcut=False, dropout, temb_channels=512):
+  def __init__(self, *, in_channels, out_channels=None, conv_shortcut=False, dropout):
     super().__init__()
     self.in_channels = in_channels
     out_channels = in_channels if out_channels is None else out_channels
@@ -53,8 +53,7 @@ class ResnetBlock(nn.Module):
     self.norm1 = _normalize(in_channels)
     self.conv1 = conv_layer_init(torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1))
     
-    if temb_channels > 0: self.temb_proj = fc_layer_init(torch.nn.Linear(temb_channels, out_channels))
-    
+
     self.norm2 = _normalize(out_channels)
     self.dropout = torch.nn.Dropout(dropout)
     self.conv2 = torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
@@ -64,14 +63,11 @@ class ResnetBlock(nn.Module):
       else:
         self.nin_shortcut = conv_layer_init(torch.nn.Conv2d(in_channels, out_channels, kernel_size=1, stride=1, padding=0))
 
-  def forward(self, x, temb):
+  def forward(self, x):
     h = x
     h = self.norm1(h)
     h = _nonlinearity(h)
     h = self.conv1(h)
-
-    if temb is not None:
-        h = h + self.temb_proj(_nonlinearity(temb))[:,:,None,None]
 
     h = self.norm2(h)
     h = _nonlinearity(h)
@@ -142,7 +138,6 @@ class SDEncoder(nn.Module):
     net_output_size = args.net_output_size
 
     self.ch = starting_channels
-    self.temb_ch = 0
     self.num_res_blocks = num_res_blocks
     self.res_block_ch_inds = set([1]) # Which levels the resnet(s) are present on
     self.in_channels = in_channels
@@ -155,18 +150,20 @@ class SDEncoder(nn.Module):
     self.in_ch_mult = in_ch_mult
     self.down = nn.ModuleList()
     for i_level in range(self.num_resolutions):
-      block = nn.ModuleList()
-      attn = nn.ModuleList()
+      
       block_in = self.ch*in_ch_mult[i_level]
       block_out = self.ch*ch_mult[i_level]
+      
       if i_level in self.res_block_ch_inds:
+        block = nn.ModuleList()
         for _ in range(self.num_res_blocks):
-          block.append(ResnetBlock(in_channels=block_in, out_channels=block_out, temb_channels=self.temb_ch, dropout=dropout))
+          block.append(ResnetBlock(in_channels=block_in, out_channels=block_out, dropout=dropout))
           block_in = block_out
+      else:
+        block = None  
 
       down = nn.Module()
       down.block = block
-      down.attn = attn
       if i_level != self.num_resolutions-1:
         down.downsample = Downsample(block_in, True)
         curr_res = curr_res // 2
@@ -174,9 +171,9 @@ class SDEncoder(nn.Module):
 
     # middle
     self.mid = nn.Module()
-    self.mid.block_1 = ResnetBlock(in_channels=block_in, out_channels=block_in, temb_channels=self.temb_ch, dropout=dropout)
+    self.mid.block_1 = ResnetBlock(in_channels=block_in, out_channels=block_in, dropout=dropout)
     self.mid.attn_1  = AttnBlock(block_in)
-    self.mid.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in, temb_channels=self.temb_ch, dropout=dropout)
+    self.mid.block_2 = ResnetBlock(in_channels=block_in, out_channels=block_in, dropout=dropout)
 
     # end
     self.norm_out = _normalize(block_in)
@@ -189,25 +186,22 @@ class SDEncoder(nn.Module):
     )
 
   def forward(self, x):
-    # timestep embedding
-    temb = None
-
     # downsampling
     hs = [self.conv_in(x)]
     for i_level in range(self.num_resolutions):
-      for i_block in range(self.num_res_blocks):
-        h = self.down[i_level].block[i_block](hs[-1], temb)
-        if len(self.down[i_level].attn) > 0:
-          h = self.down[i_level].attn[i_block](h)
-        hs.append(h)
+      curr_down = self.down[i_level]
+      if curr_down.block is not None:
+        for i_block in range(self.num_res_blocks):
+          h = curr_down.block[i_block](hs[-1])
+          hs.append(h)
       if i_level != self.num_resolutions-1:
-        hs.append(self.down[i_level].downsample(hs[-1]))
+        hs.append(curr_down.downsample(hs[-1]))
 
     # middle
     h = hs[-1]
-    h = self.mid.block_1(h, temb)
+    h = self.mid.block_1(h)
     h = self.mid.attn_1(h)
-    h = self.mid.block_2(h, temb)
+    h = self.mid.block_2(h)
 
     # end
     h = self.norm_out(h)

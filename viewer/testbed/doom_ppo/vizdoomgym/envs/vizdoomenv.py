@@ -17,17 +17,17 @@ except Exception as e:
     turn_off_rendering = True
 
 CONFIGS = [
-    ["basic.cfg", 3],  # 0
-    ["deadly_corridor.cfg", 7],  # 1
-    ["defend_the_center.cfg", 3],  # 2
-    ["defend_the_line.cfg", 3],  # 3
-    ["health_gathering.cfg", 3],  # 4
-    ["my_way_home.cfg", 5],  # 5
-    ["predict_position.cfg", 3],  # 6
-    ["take_cover.cfg", 2],  # 7
-    ["deathmatch.cfg", 20],  # 8
-    ["health_gathering_supreme.cfg", 3],  # 9
-    ["basic_more_actions.cfg", 6] # 10
+    ["basic.cfg"],  # 0
+    ["deadly_corridor.cfg"],  # 1
+    ["defend_the_center.cfg"],  # 2
+    ["defend_the_line.cfg"],  # 3
+    ["health_gathering.cfg"],  # 4
+    ["my_way_home.cfg"],  # 5
+    ["predict_position.cfg"],  # 6
+    ["take_cover.cfg"],  # 7
+    ["deathmatch.cfg"],  # 8
+    ["health_gathering_supreme.cfg"],  # 9
+    ["basic_more_actions.cfg"] # 10
 ]
 
 
@@ -56,14 +56,15 @@ class VizdoomEnv(gym.Env):
       self.position = kwargs.get("position", False)
       self.health = kwargs.get("health", False)
       
-      # Use the FrameSkip Wrapper if you skip frames! Convergence suffers if you don't.
-      self.frame_skip = kwargs.get("frame_skip", 1) 
+      self.frame_skip = kwargs.get("frame_skip", 1) # Use the MaxAndSkipEnv Wrapper instead for skipping frames!
+      self.smart_actions = kwargs.get("smart_actions", False)
+      
       
       window_visible = kwargs.get("set_window_visible", False)
       scenarios_dir = os.path.join(os.path.dirname(__file__), "scenarios")
       game_path = kwargs.get("game_path", scenarios_dir)
       resolution = kwargs.get("resolution", vzd.ScreenResolution.RES_640X480)
-      max_buttons_pressed = kwargs.get("max_buttons_pressed", 1)
+      max_buttons_pressed = 2 if self.smart_actions else kwargs.get("max_buttons_pressed", 1)
 
       # init game
       self.game = vzd.DoomGame()
@@ -71,6 +72,7 @@ class VizdoomEnv(gym.Env):
       #self.game.set_screen_format(vzd.ScreenFormat.RGB24)
       self.game.set_doom_game_path(game_path)
       self.game.load_config(os.path.join(scenarios_dir, CONFIGS[level][0]))
+      self.game.set_episode_start_time(10)
       self.game.set_window_visible(window_visible)
       self.game.set_depth_buffer_enabled(self.depth)
       self.game.set_labels_buffer_enabled(self.labels)
@@ -86,7 +88,7 @@ class VizdoomEnv(gym.Env):
       self.state = None
       self.viewer = None
 
-      self.__parse_available_buttons()
+      delta_buttons, binary_buttons = self.__parse_available_buttons()
       # check for valid max_buttons_pressed
       if max_buttons_pressed > self.num_binary_buttons > 0:
         warnings.warn(
@@ -99,7 +101,7 @@ class VizdoomEnv(gym.Env):
     
       # Specify the action space(s)
       self.max_buttons_pressed = max_buttons_pressed
-      self.action_space = self.__get_action_space() #spaces.Discrete(CONFIGS[level][1])
+      self.action_space = self.__get_action_space(delta_buttons, binary_buttons)
 
       # specify observation space(s)
       list_spaces: List[gym.Space] = [
@@ -250,7 +252,7 @@ class VizdoomEnv(gym.Env):
       return keys
 
 
-    def __get_action_space(self):
+    def __get_action_space(self, delta_buttons, binary_buttons):
       """
       return action space:
           if both binary and delta buttons defined in the config file, action space will be:
@@ -259,32 +261,54 @@ class VizdoomEnv(gym.Env):
             action space will be only one of the following MultiDiscrete|Discrete|Box
       """
       if self.num_delta_buttons == 0:
-        return self.__get_binary_action_space()
+        return self.__get_binary_action_space(binary_buttons)
       elif self.num_binary_buttons == 0:
-        return self.__get_continuous_action_space()
+        return self.__get_continuous_action_space(delta_buttons)
       else:
         return gym.spaces.Dict({
           "binary": self.__get_binary_action_space(),
           "continuous": self.__get_continuous_action_space()
         })
 
-    def __get_binary_action_space(self):
+    def __get_binary_action_space(self, binary_buttons):
       """
       return binary action space: either Discrete(n)/MultiDiscrete([2,]*num_binary_buttons)
       """
       if self.max_buttons_pressed == 0:
         button_space = gym.spaces.MultiDiscrete([2,] * self.num_binary_buttons)
       else:
-        self.button_map = [
-          np.array(list(action)) for action in itertools.product((0, 1), repeat=self.num_binary_buttons)
-          if (self.max_buttons_pressed >= sum(action) >= 0)
-        ]
-        
-        self.button_map = self.button_map[1:] # Remove the no-action row
+        if self.smart_actions:
+          button_dict = {button: idx for idx, button in enumerate(binary_buttons)}
+          do_strafe_check = vzd.Button.MOVE_LEFT in button_dict and vzd.Button.MOVE_RIGHT in button_dict
+          do_turn_check   = vzd.Button.TURN_LEFT in button_dict and vzd.Button.TURN_RIGHT in button_dict
+          do_fwbk_check   = vzd.Button.MOVE_FORWARD in button_dict and vzd.Button.MOVE_BACKWARD in button_dict
+          do_atkuse_check = vzd.Button.ATTACK in button_dict and vzd.Button.USE in button_dict
+          self.button_map = []
+          for action in itertools.product((0, 1), repeat=self.num_binary_buttons):
+            if (self.max_buttons_pressed >= sum(action) >= 0):
+              # You don't turn/move left and turn right simulateously...
+              if do_strafe_check and action[button_dict[vzd.Button.MOVE_LEFT]] == 1 and action[button_dict[vzd.Button.MOVE_RIGHT]] == 1:
+                continue
+              elif do_turn_check and action[button_dict[vzd.Button.TURN_LEFT]] == 1 and action[button_dict[vzd.Button.TURN_RIGHT]] == 1:
+                continue
+              # You don't move forward/backward simultaneously...
+              elif do_fwbk_check and action[button_dict[vzd.Button.MOVE_FORWARD]] == 1 and action[button_dict[vzd.Button.MOVE_BACKWARD]] == 1:
+                continue
+              # You don't shoot and use simultaneously...
+              elif do_atkuse_check and action[button_dict[vzd.Button.ATTACK]] == 1 and action[button_dict[vzd.Button.USE]] == 1:
+                continue
+              self.button_map.append(np.array(list(action)))
+          self.button_map = self.button_map[1:] # Remove the no-action/noop row
+        else:
+          self.button_map = [
+            np.array(list(action)) for action in itertools.product((0, 1), repeat=self.num_binary_buttons)
+            if (self.max_buttons_pressed >= sum(action) >= 0)
+          ]
+          
         button_space = gym.spaces.Discrete(len(self.button_map))
       return button_space
 
-    def __get_continuous_action_space(self):
+    def __get_continuous_action_space(self, delta_buttons):
       """
       return continuous action space: Box(float32.min, float32.max, (num_delta_buttons,), float32)
       """
@@ -314,3 +338,4 @@ class VizdoomEnv(gym.Env):
       self.num_binary_buttons = len(binary_buttons)
       if delta_buttons == binary_buttons == 0:
         raise RuntimeError("No game buttons defined. Must specify game buttons using `available_buttons` in the config file.")
+      return delta_buttons, binary_buttons
