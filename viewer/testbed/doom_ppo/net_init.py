@@ -7,6 +7,6 @@ def fc_layer_init(layer, std=np.sqrt(2), bias_const=0.0):
   return layer
 
 def conv_layer_init(layer):
-  nn.init.kaiming_normal_(layer.weight, nonlinearity='linear')
+  nn.init.kaiming_uniform_(layer.weight, nonlinearity='linear') # Change back to kaiming_normal?
   nn.init.constant_(layer.bias, 0)
   return layer

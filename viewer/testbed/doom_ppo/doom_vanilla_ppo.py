@@ -3,14 +3,12 @@ import os
 import random
 import time
 from distutils.util import strtobool
-from typing import Tuple
 
 import gym
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torchvision import transforms as T
 from torch.distributions.categorical import Categorical
 from torch.utils.tensorboard import SummaryWriter
 
@@ -20,101 +18,88 @@ VIZDOOM_GAME_PATH = "_vizdoom"
 
 from stable_baselines3.common.atari_wrappers import (  # isort:skip
   ClipRewardEnv,
-  MaxAndSkipEnv,
 )
 
 from net_init import fc_layer_init, conv_layer_init
 from sd_conv import SDEncoder
+from doom_gym_wrappers import DoomMaxAndSkipEnv, DoomObservation
 
-from gym import ObservationWrapper
-class DoomObservation(ObservationWrapper):
-  def __init__(self, env, shape) -> None:
-    super().__init__(env)
-    self.shape = shape
-    obs_shape = (self.observation_space.shape[-1],) + self.shape
-    from gym.spaces import Box
-    self.observation_space = Box(low=0.0, high=1.0, shape=obs_shape, dtype=np.float32)
-  
-  def permute_observation(self, observation):
-    observation = np.transpose(observation, (2,0,1))
-    observation = torch.tensor(observation.copy(), dtype=torch.float)
-    return observation
-  
-  def observation(self, observation):
-    observation = self.permute_observation(observation)
-    return T.Resize(self.shape)(observation).squeeze(0).numpy() / 255.0
 
 def parse_args():
-    # fmt: off
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="", help="Preexisting model to load (.chkpt file)")
-    parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
-        help="the name of this experiment")
-    parser.add_argument("--gym-id", type=str, default="VizdoomCorridor-v0", help="the id of the gym environment")
-    parser.add_argument("--learning-rate", type=float, default=2.5e-4, help="the learning rate of the optimizer")
-    parser.add_argument("--seed", type=int, default=1, help="RNG seed of the experiment")
-    parser.add_argument("--total-timesteps", type=int, default=10000000,
-        help="total timesteps of the experiments")
-    parser.add_argument("--save-timesteps", type=int, default=50000, help="Timesteps between network saves")
-    parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="if toggled, `torch.backends.cudnn.deterministic=False`")
-    parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="if toggled, cuda will be enabled by default")
-    parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="if toggled, this experiment will be tracked with Weights and Biases")
-    parser.add_argument("--wandb-project-name", type=str, default="ppo-implementation-details",
-        help="the wandb's project name")
-    parser.add_argument("--wandb-entity", type=str, default=None,
-        help="the entity (team) of wandb's project")
-    parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="weather to capture videos of the agent performances (check out `videos` folder)")
+  parser = argparse.ArgumentParser()
+  parser.add_argument("--model", type=str, default="", help="Preexisting model to load (.chkpt file)")
+  parser.add_argument("--exp-name", type=str, default=os.path.basename(__file__).rstrip(".py"),
+      help="the name of this experiment")
+  parser.add_argument("--gym-id", type=str, default="VizdoomHealthGathering-v0", help="the id of the gym environment")
+  parser.add_argument("--learning-rate", type=float, default=2.5e-4, help="the learning rate of the optimizer")
+  parser.add_argument("--seed", type=int, default=1, help="RNG seed of the experiment")
+  parser.add_argument("--total-timesteps", type=int, default=10000000,
+      help="total timesteps of the experiments")
+  parser.add_argument("--save-timesteps", type=int, default=50000, help="Timesteps between network saves")
+  parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+      help="if toggled, `torch.backends.cudnn.deterministic=False`")
+  parser.add_argument("--cuda", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+      help="if toggled, cuda will be enabled by default")
+  parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+      help="if toggled, this experiment will be tracked with Weights and Biases")
+  parser.add_argument("--wandb-project-name", type=str, default="ppo-implementation-details",
+      help="the wandb's project name")
+  parser.add_argument("--wandb-entity", type=str, default=None,
+      help="the entity (team) of wandb's project")
+  parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+      help="weather to capture videos of the agent performances (check out `videos` folder)")
 
-    # Game specific arguments
-    parser.add_argument("--multidiscrete-actions", type=bool, default=True, 
-      help="Whether the agent uses multidiscrete actions (up to 2 at a time) or not") # NOTE: Multidiscrete converges faster!
-    parser.add_argument("--smart-actions", type=bool, default=True,
-      help="Whether to use smart multdiscrete actions (e.g., you don't move left and right simulataneously), this limits actions to 2 at a time.")
+  # Game specific arguments
+  parser.add_argument("--multidiscrete-actions", type=bool, default=False, 
+    help="Whether the agent uses multidiscrete actions (up to 2 at a time) or not - this is disabled automatically if smart-actions are enabled.") # NOTE: Multidiscrete converges faster!
+  parser.add_argument("--smart-actions", type=bool, default=True,
+    help="Whether to use smart multdiscrete actions (e.g., you don't move left and right simulataneously), this limits actions to 2 at a time.")
+  parser.add_argument("--split-labels", type=bool, default=False, 
+    help="Whether to split the labels buffer up into good/bad/utility channels") # This is way too slow.
+  parser.add_argument("--reward-augment", type=str, default="normalize", help="What to do with the reward signal per frame, options: clip,normalize,none") # NOTE: Normalization is the very clear winner, without the network fails to converge properly over time
+  #parser.add_argument("--always-run")
 
+  # Network specific arguments
+  parser.add_argument("--net-output-size", type=int, default=4096, help="Output size of the convolutional network, input size to the LSTM")
+  parser.add_argument("--lstm-hidden-size", type=int, default=1024, help="Hidden size of the LSTM")
+  parser.add_argument("--lstm-num-layers", type=int, default=1, help="Number of layers in the LSTM") # NOTE: More than one layer doesn't appear to have any benefit
+  parser.add_argument("--lstm-dropout", type=float, default=0.0, help="Dropout fraction [0,1] in the LSTM")
+  parser.add_argument("--sd-conv", type=bool, default=True, help="Use the Stable Diffusion encoder residual convolutional network")
+  parser.add_argument("--obs-shape", type=str, default="60,80", # 69,92 doesn't appear to help convergence... 
+    help="Shape of the RGB screenbuffer (height, width) after being processed (when fed to the convnet).")
 
-    # Network specific arguments
-    parser.add_argument("--net-output-size", type=int, default=2048, help="Output size of the convolutional network, input size to the LSTM")
-    parser.add_argument("--lstm-hidden-size", type=int, default=512, help="Hidden size of the LSTM")
-    parser.add_argument("--sd-conv", type=bool, default=True, help="Use the Stable Diffusion encoder residual convolutional network")
-    parser.add_argument("--obs-shape", type=str, default="60,80", # 69,92 doesn't appear to help convergence... 
-      help="Shape of the RGB screenbuffer (height, width) after being processed (when fed to the convnet).")
-
-    # Algorithm specific arguments
-    parser.add_argument("--num-envs", type=int, default=8, help="the number of parallel game environments")
-    parser.add_argument("--num-steps", type=int, default=128,
-        help="the number of steps to run in each environment per policy rollout")
-    parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggle learning rate annealing for policy and value networks")
-    parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Use GAE for advantage computation")
-    parser.add_argument("--gamma", type=float, default=0.99,
-        help="the discount factor gamma")
-    parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
-    parser.add_argument("--num-minibatches", type=int, default=4, help="the number of mini-batches")
-    parser.add_argument("--update-epochs", type=int, default=4, help="the K epochs to update the policy")
-    parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggles advantages normalization")
-    parser.add_argument("--clip-coef", type=float, default=0.1, help="the surrogate clipping coefficient")
-    parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
-        help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
-    parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
-    parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
-    parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
-    parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+  # Algorithm specific arguments
+  parser.add_argument("--num-envs", type=int, default=16, help="the number of parallel game environments")
+  parser.add_argument("--num-steps", type=int, default=128,
+      help="the number of steps to run in each environment per policy rollout")
+  parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+      help="Toggle learning rate annealing for policy and value networks")
+  parser.add_argument("--gae", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+      help="Use GAE for advantage computation")
+  parser.add_argument("--gamma", type=float, default=0.99,
+      help="the discount factor gamma")
+  parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
+  parser.add_argument("--num-minibatches", type=int, default=4, help="the number of mini-batches")
+  parser.add_argument("--update-epochs", type=int, default=4, help="the K epochs to update the policy")
+  parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+      help="Toggles advantages normalization")
+  parser.add_argument("--clip-coef", type=float, default=0.1, help="the surrogate clipping coefficient")
+  parser.add_argument("--clip-vloss", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
+      help="Toggles whether or not to use a clipped loss for the value function, as per the paper.")
+  parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
+  parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
+  parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
+  parser.add_argument("--target-kl", type=float, default=None, help="the target KL divergence threshold")
+  
+  args = parser.parse_args()
+  if args.smart_actions:
+    args.multidiscrete_actions = False
     
-    args = parser.parse_args()
-    if args.smart_actions:
-      args.multidiscrete_actions = False
-      
-    args.obs_shape = tuple([int(item) for item in args.obs_shape.split(',')])
-    args.batch_size = int(args.num_envs * args.num_steps)
-    args.minibatch_size = int(args.batch_size // args.num_minibatches)
+  args.obs_shape = tuple([int(item) for item in args.obs_shape.split(',')])
+  args.batch_size = int(args.num_envs * args.num_steps)
+  args.minibatch_size = int(args.batch_size // args.num_minibatches)
 
-    return args
+  return args
 
 def make_env(args, seed, idx, run_name):
   def thunk():
@@ -123,17 +108,25 @@ def make_env(args, seed, idx, run_name):
     env = gym.make(
       args.gym_id, 
       set_window_visible=(idx==0), 
-      game_path=os.path.join(VIZDOOM_GAME_PATH, "doom.wad"),
-      resolution=vzd.ScreenResolution.RES_640X480,
+      game_path=os.path.join(VIZDOOM_GAME_PATH, "doom2.wad"),
+      resolution=vzd.ScreenResolution.RES_200X150,
       max_buttons_pressed=max_buttons_pressed,
-      smart_actions=args.smart_actions
+      smart_actions=args.smart_actions,
+      labels=True,
+      split_labels=args.split_labels,
+      position=True,
     )
+    env = DoomObservation(env, shape=args.obs_shape)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     if args.capture_video and idx == 0:
         env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-    env = MaxAndSkipEnv(env, skip=4)
-    env = ClipRewardEnv(env)
-    env = DoomObservation(env, shape=args.obs_shape)
+    env = DoomMaxAndSkipEnv(env, skip=4)
+    if args.reward_augment == "clip":
+      env = ClipRewardEnv(env)
+    elif args.reward_augment == "normalize":
+      env = gym.wrappers.NormalizeReward(env)
+      env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+    
     #env = gym.wrappers.ResizeObservation(env, (84, 84))
     #env = gym.wrappers.GrayScaleObservation(env)
     #env = gym.wrappers.FrameStack(env, 1)
@@ -185,7 +178,7 @@ class Agent(nn.Module):
 
     # NOTE: LSTM appears to like a 4:1 ratio of input size to hidden size, increasing
     # this ratio is detrimental to the network (doesn't converge or takes a very long time)
-    self.lstm = nn.LSTM(net_output_size, lstm_hidden_size)
+    self.lstm = nn.LSTM(net_output_size, lstm_hidden_size, dropout=args.lstm_dropout, num_layers=args.lstm_num_layers)
     for name, param in self.lstm.named_parameters():
       if "bias" in name:
         nn.init.constant_(param, 0)
@@ -287,9 +280,9 @@ if __name__ == "__main__":
 
   agent = Agent(args, envs).to(device)
   optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
-
+  
   # ALGO Logic: Storage setup
-  obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space.shape).to(device)
+  obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space[0].shape).to(device)
   actions = torch.zeros((args.num_steps, args.num_envs) + envs.single_action_space.shape).to(device)
   logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
   rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -318,7 +311,9 @@ if __name__ == "__main__":
     
   
   start_time = time.time()
-  next_obs = torch.Tensor(envs.reset()).to(device)
+  
+  next_obs_tuple = envs.reset()
+  next_obs = torch.Tensor(next_obs_tuple[0]).to(device)
   next_done = torch.zeros(args.num_envs).to(device)
   next_lstm_state = (
       torch.zeros(agent.lstm.num_layers, args.num_envs, agent.lstm.hidden_size).to(device),
@@ -358,17 +353,19 @@ if __name__ == "__main__":
         logprobs[step] = logprob
 
         # TRY NOT TO MODIFY: execute the game and log data.
-        next_obs, reward, done, info = envs.step(action.cpu().numpy())
+        next_obs_tuple, reward, done, info = envs.step(action.cpu().numpy())
         rewards[step] = torch.tensor(reward).to(device).view(-1)
-        next_obs, next_done = torch.Tensor(next_obs).to(device), torch.Tensor(done).to(device)
+        next_obs, next_done = torch.Tensor(next_obs_tuple[0]).to(device), torch.Tensor(done).to(device)
 
         if global_step % 1000 == 0:
-          writer.add_image("images/observation", next_obs[0], global_step)
+          writer.add_image("images/rgb_observation", next_obs[0,0:3], global_step)
+          if next_obs.shape[1] > 3:
+            writer.add_image("images/labels_observation", next_obs[0,3:4], global_step)
 
         for env_idx, item in enumerate(info):
           if "episode" in item.keys():
             cum_scores[env_idx] += item["episode"]["r"]
-            print(f"global_step={global_step}, episodic_return={item['episode']['r']}")
+            print(f"[{env_idx}] global_step={global_step}, episodic_return={item['episode']['r']}")
             writer.add_scalar("charts/episodic_return",   item["episode"]["r"], global_step)
             writer.add_scalar("charts/episodic_length",   item["episode"]["l"], global_step)
             writer.add_scalar("charts/cumulative_return", cum_scores[env_idx],  global_step)
@@ -407,7 +404,7 @@ if __name__ == "__main__":
           advantages = returns - values
 
       # flatten the batch
-      b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+      b_obs = obs.reshape((-1,) + envs.single_observation_space[0].shape)
       b_logprobs = logprobs.reshape(-1)
       b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
       b_dones = dones.reshape(-1)

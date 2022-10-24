@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.distributions as td
 import numpy as np
 
 from net_init import fc_layer_init, conv_layer_init
@@ -131,7 +130,7 @@ class SDEncoder(nn.Module):
     starting_channels = 32 #args.starting_channels
     z_channels = 8 #args.z_channels
 
-    in_channels, res_h, res_w = envs.single_observation_space.shape
+    in_channels, res_h, res_w = envs.single_observation_space[0].shape
     self.num_resolutions = len(ch_mult)
     final_res = np.array([res_h, res_w]) // 2**(self.num_resolutions-1)
     final_fc_input_size = 2*z_channels*final_res[0]*final_res[1]

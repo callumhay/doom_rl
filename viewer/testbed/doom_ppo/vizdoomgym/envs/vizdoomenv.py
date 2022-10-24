@@ -30,6 +30,30 @@ CONFIGS = [
     ["basic_more_actions.cfg"] # 10
 ]
 
+_DOOM_BAD_STUFF_SET = set([
+  'ShotgunGuy','ChaingunGuy','BaronOfHell','Zombieman','DoomImp','Arachnotron','SpiderMastermind',
+  'Demon','Spectre','DoomImpBall','Cacodemon','Revenant','RevenantTracer',
+  'StealthArachnotron','StealthArchvile','StealthCacodemon',
+  'StealthChaingunGuy','StealthDemon','StealthDoomImp','StealthFatso','StealthRevenant',
+  'CacodemonBall','PainElemental','ArchvileFire',
+  'StealthBaron','StealthHellKnight','StealthZombieMan','StealthShotgunGuy',
+  'LostSoul','Archvile','Fatso','HellKnight','Cyberdemon','ArachnotronPlasma','BaronBall','FatShot'
+])
+_DOOM_GOOD_STUFF_SET = set([
+  'Stimpack', 'Medikit', 'Soulsphere', 'GreenArmor', 'BlueArmor', 'ArmorBonus',
+  'Megasphere', 'InvulnerabilitySphere', 'BlurSphere', 'Backpack', 'HealthBonus',
+  'RadSuit', 'BlueCard', 'RedCard', 'YellowCard', 'YellowSkull', 'RedSkull', 'BlueSkull',
+])
+_DOOM_WEAPON_STUFF_SET = set([
+  'Clip', 'Shell', 'Cell', 'ClipBox', 'RocketAmmo', 'RocketBox', 'CellPack', 'ShellBox',
+  'Shotgun','Chaingun','RocketLauncher','PlasmaRifle','BFG9000','Chainsaw','SuperShotgun',
+])
+def _get_label_type_id(label):
+  name = label.object_name
+  if name in _DOOM_BAD_STUFF_SET: return 1
+  elif name in _DOOM_GOOD_STUFF_SET: return 2
+  elif name in _DOOM_WEAPON_STUFF_SET: return 3
+  return None
 
 class VizdoomEnv(gym.Env):
     def __init__(self, level, **kwargs):
@@ -53,12 +77,11 @@ class VizdoomEnv(gym.Env):
       # parse keyword arguments
       self.depth = kwargs.get("depth", False)
       self.labels = kwargs.get("labels", False)
+      self.split_labels = kwargs.get("split_labels", False) # Whether or not we split the labels buffers into good/bad/utility categories - this is VERY slow.
       self.position = kwargs.get("position", False)
       self.health = kwargs.get("health", False)
-      
       self.frame_skip = kwargs.get("frame_skip", 1) # Use the MaxAndSkipEnv Wrapper instead for skipping frames!
       self.smart_actions = kwargs.get("smart_actions", False)
-      
       
       window_visible = kwargs.get("set_window_visible", False)
       scenarios_dir = os.path.join(os.path.dirname(__file__), "scenarios")
@@ -68,10 +91,10 @@ class VizdoomEnv(gym.Env):
 
       # init game
       self.game = vzd.DoomGame()
-      self.game.set_screen_resolution(resolution)
       #self.game.set_screen_format(vzd.ScreenFormat.RGB24)
       self.game.set_doom_game_path(game_path)
       self.game.load_config(os.path.join(scenarios_dir, CONFIGS[level][0]))
+      self.game.set_screen_resolution(resolution)
       self.game.set_episode_start_time(10)
       self.game.set_window_visible(window_visible)
       self.game.set_depth_buffer_enabled(self.depth)
@@ -104,35 +127,37 @@ class VizdoomEnv(gym.Env):
       self.action_space = self.__get_action_space(delta_buttons, binary_buttons)
 
       # specify observation space(s)
+      num_channels = self.game.get_screen_channels()
+      
+      if self.labels:
+        if self.split_labels:
+          num_channels += 3
+        else:
+          num_channels += 1
+          
+      if self.depth:
+        num_channels += 1
+        
       list_spaces: List[gym.Space] = [
         spaces.Box(0, 255,
           (
             self.game.get_screen_height(),
             self.game.get_screen_width(),
-            self.game.get_screen_channels(),
+            num_channels,
           ), dtype=np.uint8,
         )
       ]
-      if self.depth:
-        list_spaces.append(
-          spaces.Box(0, 255,
-            (self.game.get_screen_height(), self.game.get_screen_width(),),
-            dtype=np.uint8,
-          ))
-      if self.labels:
-        list_spaces.append(
-          spaces.Box(0, 255,
-            (self.game.get_screen_height(), self.game.get_screen_width(),),
-            dtype=np.uint8,
-          ))
+
       if self.position:
-        list_spaces.append(spaces.Box(-np.Inf, np.Inf, (4, 1)))
+        list_spaces.append(spaces.Box(-np.Inf, np.Inf, (4,)))
+      
       if self.health:
-        list_spaces.append(spaces.Box(0, np.Inf, (1, 1)))
-      if len(list_spaces) == 1:
-        self.observation_space = list_spaces[0]
-      else:
-        self.observation_space = spaces.Tuple(list_spaces)
+        list_spaces.append(spaces.Box(0, np.Inf, (1,)))
+      
+      #if len(list_spaces) == 1:
+      #  self.observation_space = list_spaces[0]
+      #else:
+      self.observation_space = spaces.Tuple(list_spaces)
 
 
     def __parse_binary_buttons(self, env_action, agent_action):
@@ -188,22 +213,40 @@ class VizdoomEnv(gym.Env):
       return self.__collect_observations()
 
     def __collect_observations(self):
-      observation = []
+      observations = []
+      
       if self.state is not None:
-        #observation.append(self.state.screen_buffer)
-        observation.append(np.transpose(self.state.screen_buffer, (1, 2, 0)))
+        observation = np.transpose(self.state.screen_buffer, (1, 2, 0))
         if self.depth:
-          observation.append(self.state.depth_buffer)
+          cat_axis = self.state.depth_buffer.ndim
+          depth_observation = np.expand_dims(self.state.depth_buffer, cat_axis)
+          observation = np.concatenate([observation, depth_observation], cat_axis)
+          
         if self.labels:
-          observation.append(self.state.labels_buffer)
+          cat_axis = self.state.labels_buffer.ndim
+          if self.split_labels:
+            _mapping = np.zeros((256,), dtype=np.uint8)
+            for label in self.state.labels:
+              type_id = _get_label_type_id(label)
+              if type_id is not None:
+                _mapping[label.value] = type_id
+            labels_observation = -(_mapping[self.state.labels_buffer] == np.arange(1,4)[:,None,None]).astype(np.uint8) / 255.0
+            labels_observation = np.transpose(labels_observation, (1, 2, 0))
+          else: 
+            labels_observation = np.expand_dims(self.state.labels_buffer, cat_axis)
+          observation = np.concatenate([observation, labels_observation], cat_axis)
+          
+        observations.append(observation)
+
         if self.position:
-          observation.append(
+          observations.append(
             np.array([self.state.game_variables[i] for i in range(4)])
           )
           if self.health:
-            observation.append(self.state.game_variables[4])
+            observations.append(self.state.game_variables[4])
         elif self.health:
-          observation.append(self.state.game_variables[0])
+          observations.append(self.state.game_variables[0])
+
       else:
         # there is no state in the terminal step, so a "zero observation is returned instead"
         if isinstance(self.observation_space, gym.spaces.box.Box):
@@ -213,12 +256,12 @@ class VizdoomEnv(gym.Env):
           obs_space = self.observation_space
 
         for space in obs_space:
-          observation.append(np.zeros(space.shape, dtype=space.dtype))
+          observations.append(np.zeros(space.shape, dtype=space.dtype))
 
       # if there is only one observation, return obs as array to sustain compatibility
-      if len(observation) == 1:
-        observation = observation[0]
-      return observation
+      #if len(observations) == 1:
+      #  observations = observations[0]
+      return observations
 
     def render(self, mode="human"):
       if turn_off_rendering:

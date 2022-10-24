@@ -28,11 +28,11 @@
       "request": "launch",
       "program": "${file}",
       "args": [
+        //"--model",
+        //"./runs/VizdoomCorridor-D2/VizdoomCorridor-v0-lstm4096-1024-dropout0.2-sd_conv-60x80-smrtas-labelbuf/doom_ppo_agent_1600000.chkpt"
         /*
         //"--map",
         //"E1M2",
-        //"--model",
-        //"./runs/doom_ppo_1_basic_1666308863/doom_ppo_agent_1600000.chkpt",
         "--num-steps",
         "512",
         "--num-envs",
