@@ -5,7 +5,7 @@ from typing import List
 
 import gym
 from gym import spaces
-import vizdoom.vizdoom as vzd
+import vizdoom as vzd
 import numpy as np
 
 
@@ -37,7 +37,8 @@ _DOOM_BAD_STUFF_SET = set([
   'StealthChaingunGuy','StealthDemon','StealthDoomImp','StealthFatso','StealthRevenant',
   'CacodemonBall','PainElemental','ArchvileFire',
   'StealthBaron','StealthHellKnight','StealthZombieMan','StealthShotgunGuy',
-  'LostSoul','Archvile','Fatso','HellKnight','Cyberdemon','ArachnotronPlasma','BaronBall','FatShot'
+  'LostSoul','Archvile','Fatso','HellKnight','Cyberdemon','ArachnotronPlasma',
+  'BaronBall','FatShot', 'ExplosiveBarrel'
 ])
 _DOOM_GOOD_STUFF_SET = set([
   'Stimpack', 'Medikit', 'Soulsphere', 'GreenArmor', 'BlueArmor', 'ArmorBonus',
@@ -48,6 +49,8 @@ _DOOM_WEAPON_STUFF_SET = set([
   'Clip', 'Shell', 'Cell', 'ClipBox', 'RocketAmmo', 'RocketBox', 'CellPack', 'ShellBox',
   'Shotgun','Chaingun','RocketLauncher','PlasmaRifle','BFG9000','Chainsaw','SuperShotgun',
 ])
+_DOOM_STUFF_SET = (_DOOM_BAD_STUFF_SET.union(_DOOM_GOOD_STUFF_SET)).update(_DOOM_WEAPON_STUFF_SET)
+
 def _get_label_type_id(label):
   name = label.object_name
   if name in _DOOM_BAD_STUFF_SET: return 1
@@ -55,24 +58,11 @@ def _get_label_type_id(label):
   elif name in _DOOM_WEAPON_STUFF_SET: return 3
   return None
 
+def _filter_for_useful_labels(label):
+  return label.object_id if label.object_name in _DOOM_STUFF_SET else 0
+
 class VizdoomEnv(gym.Env):
     def __init__(self, level, **kwargs):
-      """
-      Base class for Gym interface for ViZDoom. Child classes are defined in vizdoom_env_definitions.py,
-      that contain the level parameter and pass through any kwargs from gym.make()
-      :param level: index of level in the CONFIGS list above
-      :param kwargs: keyword arguments from gym.make(env_name_string, **kwargs) call. 'depth' will render the
-      depth buffer and 'labels' will render the object labels and return it in the observation.
-      Note that the observation will be a list with the screen buffer as the first element. If no kwargs are
-      provided (or depth=False and labels=False) the observation will be of type np.ndarray.
-      
-      max_buttons_pressed (int): defines the number of binary buttons that can be selected at once. Default: 1.
-        Should be >= 0. If < 0 a RuntimeError is raised.
-        If == 0, the binary action space becomes MultiDiscrete([2] * num_binary_buttons)
-        and [0, num_binary_buttons] number of binary buttons can be selected.
-        If > 0, the binary action space becomes Discrete(n)
-        and [0, max_buttons_pressed] number of binary buttons can be selected.
-      """
 
       # parse keyword arguments
       self.depth = kwargs.get("depth", False)
@@ -82,6 +72,8 @@ class VizdoomEnv(gym.Env):
       self.health = kwargs.get("health", False)
       self.frame_skip = kwargs.get("frame_skip", 1) # Use the MaxAndSkipEnv Wrapper instead for skipping frames!
       self.smart_actions = kwargs.get("smart_actions", False)
+      self.always_run = kwargs.get("always_run", False)
+      self.custom_config = kwargs.get("custom_config", None)
       
       window_visible = kwargs.get("set_window_visible", False)
       scenarios_dir = os.path.join(os.path.dirname(__file__), "scenarios")
@@ -93,20 +85,19 @@ class VizdoomEnv(gym.Env):
       self.game = vzd.DoomGame()
       #self.game.set_screen_format(vzd.ScreenFormat.RGB24)
       self.game.set_doom_game_path(game_path)
-      self.game.load_config(os.path.join(scenarios_dir, CONFIGS[level][0]))
+      
+      if level >= 0 and level < len(CONFIGS):
+        self.game.load_config(os.path.join(scenarios_dir, CONFIGS[level][0]))
+        
       self.game.set_screen_resolution(resolution)
       self.game.set_episode_start_time(10)
       self.game.set_window_visible(window_visible)
       self.game.set_depth_buffer_enabled(self.depth)
       self.game.set_labels_buffer_enabled(self.labels)
-      self.game.clear_available_game_variables()
-      if self.position:
-          self.game.add_available_game_variable(vzd.GameVariable.POSITION_X)
-          self.game.add_available_game_variable(vzd.GameVariable.POSITION_Y)
-          self.game.add_available_game_variable(vzd.GameVariable.POSITION_Z)
-          self.game.add_available_game_variable(vzd.GameVariable.ANGLE)
-      if self.health:
-          self.game.add_available_game_variable(vzd.GameVariable.HEALTH)
+      
+      if self.custom_config is not None:
+        self.custom_config.load(self)
+      
       self.game.init()
       self.state = None
       self.viewer = None
@@ -147,16 +138,15 @@ class VizdoomEnv(gym.Env):
           ), dtype=np.uint8,
         )
       ]
+      
+      if self.custom_config is not None:
+        list_spaces += self.custom_config.game_variable_spaces()
 
-      if self.position:
-        list_spaces.append(spaces.Box(-np.Inf, np.Inf, (4,)))
-      
-      if self.health:
-        list_spaces.append(spaces.Box(0, np.Inf, (1,)))
-      
-      #if len(list_spaces) == 1:
-      #  self.observation_space = list_spaces[0]
-      #else:
+      #if self.position:
+      #  list_spaces.append(spaces.Box(-np.Inf, np.Inf, (4,)))
+      #if self.health:
+      #  list_spaces.append(spaces.Box(0, np.Inf, (1,)))
+
       self.observation_space = spaces.Tuple(list_spaces)
 
 
@@ -185,6 +175,14 @@ class VizdoomEnv(gym.Env):
       self.__parse_binary_buttons(env_action, agent_action)
       return env_action
 
+    def is_episode_finished(self):
+      return self.game.get_state() == None or self.game.is_episode_finished()
+    
+    def is_map_ended(self):
+      return self.game.is_episode_finished() and not self.game.is_player_dead() and self.game.get_episode_time() < self.game.get_episode_timeout()
+
+    def seed(self, seed:int):
+      self.game.set_seed(seed)
 
     def step(self, action):
       assert self.action_space.contains(action), f"{action!r} ({type(action)}) invalid"
@@ -196,6 +194,9 @@ class VizdoomEnv(gym.Env):
       except:
         print("Vizdoom window was closed, exiting.")
         exit(0)
+      
+      if self.custom_config is not None:
+        reward += self.custom_config.step_reward(self.game)
       
       self.state = self.game.get_state()
       done = self.game.is_episode_finished()
@@ -238,29 +239,14 @@ class VizdoomEnv(gym.Env):
           
         observations.append(observation)
 
-        if self.position:
-          observations.append(
-            np.array([self.state.game_variables[i] for i in range(4)])
-          )
-          if self.health:
-            observations.append(self.state.game_variables[4])
-        elif self.health:
-          observations.append(self.state.game_variables[0])
+        if self.custom_config is not None:
+          observations += self.custom_config.game_variable_observations(self.game)
 
       else:
-        # there is no state in the terminal step, so a "zero observation is returned instead"
-        if isinstance(self.observation_space, gym.spaces.box.Box):
-          # Box isn't iterable
-          obs_space = [self.observation_space]
-        else:
-          obs_space = self.observation_space
-
-        for space in obs_space:
+        # There is no state in the terminal step, so a "zero observation is returned instead"
+        for space in self.observation_space:
           observations.append(np.zeros(space.shape, dtype=space.dtype))
 
-      # if there is only one observation, return obs as array to sustain compatibility
-      #if len(observations) == 1:
-      #  observations = observations[0]
       return observations
 
     def render(self, mode="human"):
@@ -326,6 +312,7 @@ class VizdoomEnv(gym.Env):
           do_turn_check   = vzd.Button.TURN_LEFT in button_dict and vzd.Button.TURN_RIGHT in button_dict
           do_fwbk_check   = vzd.Button.MOVE_FORWARD in button_dict and vzd.Button.MOVE_BACKWARD in button_dict
           do_atkuse_check = vzd.Button.ATTACK in button_dict and vzd.Button.USE in button_dict
+          do_speed_check  = vzd.Button.SPEED in button_dict
           self.button_map = []
           for action in itertools.product((0, 1), repeat=self.num_binary_buttons):
             if (self.max_buttons_pressed >= sum(action) >= 0):
@@ -340,7 +327,24 @@ class VizdoomEnv(gym.Env):
               # You don't shoot and use simultaneously...
               elif do_atkuse_check and action[button_dict[vzd.Button.ATTACK]] == 1 and action[button_dict[vzd.Button.USE]] == 1:
                 continue
+              
+              elif do_speed_check and action[button_dict[vzd.Button.SPEED]] == 1:
+                # speed is not a standalone action...
+                if sum(action) == 1: continue 
+                # speed must be used in combination with actual movement...
+                if (do_strafe_check and action[button_dict[vzd.Button.MOVE_LEFT]] != 1 and action[button_dict[vzd.Button.MOVE_RIGHT]] != 1) \
+                   and (do_fwbk_check and action[button_dict[vzd.Button.MOVE_FORWARD]] != 1 and action[button_dict[vzd.Button.MOVE_BACKWARD]] != 1):
+                  continue
+              
+              # Make sure any action that involves movement also has speed activated when always_run is on
+              if self.always_run and do_speed_check:
+                is_strafing = do_strafe_check and (action[button_dict[vzd.Button.MOVE_LEFT]] == 1 or action[button_dict[vzd.Button.MOVE_RIGHT]] == 1)
+                is_movingfb = do_fwbk_check and (action[button_dict[vzd.Button.MOVE_FORWARD]] == 1 or action[button_dict[vzd.Button.MOVE_BACKWARD]] == 1)
+                if is_strafing or is_movingfb:
+                  action[button_dict[vzd.Button.SPEED]] = 1
+              
               self.button_map.append(np.array(list(action)))
+              
           self.button_map = self.button_map[1:] # Remove the no-action/noop row
         else:
           self.button_map = [

@@ -1,55 +1,51 @@
+from importlib.metadata import entry_points
 from gym.envs.registration import register
 
 register(
-    id='VizdoomBasic-v0',
-    entry_point='vizdoomgym.envs:VizdoomBasic'
+  id='VizdoomDoomGame-v0',
+  entry_point='vizdoomgym.envs:VizdoomDoomGame'
 )
 register(
-    id='VizdoomBasicMoreActions-v0',
-    entry_point='vizdoomgym.envs:VizdoomBasicMoreActions'
+  id='VizdoomBasic-v0',
+  entry_point='vizdoomgym.envs:VizdoomBasic'
 )
-
 register(
-    id='VizdoomCorridor-v0',
-    entry_point='vizdoomgym.envs:VizdoomCorridor'
+  id='VizdoomBasicMoreActions-v0',
+  entry_point='vizdoomgym.envs:VizdoomBasicMoreActions'
 )
-
 register(
-    id='VizdoomDefendCenter-v0',
-    entry_point='vizdoomgym.envs:VizdoomDefendCenter'
+  id='VizdoomCorridor-v0',
+  entry_point='vizdoomgym.envs:VizdoomCorridor'
 )
-
 register(
-    id='VizdoomDefendLine-v0',
-    entry_point='vizdoomgym.envs:VizdoomDefendLine'
+  id='VizdoomDefendCenter-v0',
+  entry_point='vizdoomgym.envs:VizdoomDefendCenter'
 )
-
 register(
-    id='VizdoomHealthGathering-v0',
-    entry_point='vizdoomgym.envs:VizdoomHealthGathering'
+  id='VizdoomDefendLine-v0',
+  entry_point='vizdoomgym.envs:VizdoomDefendLine'
 )
-
 register(
-    id='VizdoomMyWayHome-v0',
-    entry_point='vizdoomgym.envs:VizdoomMyWayHome'
+  id='VizdoomHealthGathering-v0',
+  entry_point='vizdoomgym.envs:VizdoomHealthGathering'
 )
-
 register(
-    id='VizdoomPredictPosition-v0',
-    entry_point='vizdoomgym.envs:VizdoomPredictPosition'
+  id='VizdoomMyWayHome-v0',
+  entry_point='vizdoomgym.envs:VizdoomMyWayHome'
 )
-
 register(
-    id='VizdoomTakeCover-v0',
-    entry_point='vizdoomgym.envs:VizdoomTakeCover'
+  id='VizdoomPredictPosition-v0',
+  entry_point='vizdoomgym.envs:VizdoomPredictPosition'
 )
-
 register(
-    id='VizdoomDeathmatch-v0',
-    entry_point='vizdoomgym.envs:VizdoomDeathmatch'
+  id='VizdoomTakeCover-v0',
+  entry_point='vizdoomgym.envs:VizdoomTakeCover'
 )
-
 register(
-    id='VizdoomHealthGatheringSupreme-v0',
-    entry_point='vizdoomgym.envs:VizdoomHealthGatheringSupreme'
+  id='VizdoomDeathmatch-v0',
+  entry_point='vizdoomgym.envs:VizdoomDeathmatch'
+)
+register(
+  id='VizdoomHealthGatheringSupreme-v0',
+  entry_point='vizdoomgym.envs:VizdoomHealthGatheringSupreme'
 )

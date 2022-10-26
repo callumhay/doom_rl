@@ -28,8 +28,8 @@
       "request": "launch",
       "program": "${file}",
       "args": [
-        //"--model",
-        //"./runs/VizdoomCorridor-D2/VizdoomCorridor-v0-lstm4096-1024-dropout0.2-sd_conv-60x80-smrtas-labelbuf/doom_ppo_agent_1600000.chkpt"
+        "--model",
+        "./runs/VizdoomDoomGame-v0__doom_ppo__1__1666710221/doom_ppo_agent_4800000.chkpt"
         /*
         //"--map",
         //"E1M2",
