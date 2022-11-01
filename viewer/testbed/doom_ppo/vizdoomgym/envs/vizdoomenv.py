@@ -8,6 +8,8 @@ from gym import spaces
 import vizdoom as vzd
 import numpy as np
 
+import torch
+from torchvision import transforms as T
 
 turn_off_rendering = False
 try:
@@ -67,9 +69,8 @@ class VizdoomEnv(gym.Env):
       # parse keyword arguments
       self.depth = kwargs.get("depth", False)
       self.labels = kwargs.get("labels", False)
+      self.automap = kwargs.get("automap", False)
       self.split_labels = kwargs.get("split_labels", False) # Whether or not we split the labels buffers into good/bad/utility categories - this is VERY slow.
-      self.position = kwargs.get("position", False)
-      self.health = kwargs.get("health", False)
       self.frame_skip = kwargs.get("frame_skip", 1) # Use the MaxAndSkipEnv Wrapper instead for skipping frames!
       self.smart_actions = kwargs.get("smart_actions", False)
       self.always_run = kwargs.get("always_run", False)
@@ -94,7 +95,18 @@ class VizdoomEnv(gym.Env):
       self.game.set_window_visible(window_visible)
       self.game.set_depth_buffer_enabled(self.depth)
       self.game.set_labels_buffer_enabled(self.labels)
-      
+      self.game.set_automap_buffer_enabled(self.automap)
+      if self.automap:
+        #self.game.set_render_hud(False)
+        self.game.set_automap_mode(vzd.AutomapMode.OBJECTS_WITH_SIZE)
+        # Map's colors can be changed using CVARs
+        # Full list is available here: https://zdoom.org/wiki/CVARs:Automap#am_backcolor
+        self.game.add_game_args("+am_followplayer 1")
+        self.game.add_game_args("+viz_am_scale 1.25")
+        self.game.add_game_args("+am_overlay 1")
+        self.game.add_game_args("+am_backcolor 000000")
+
+        
       if self.custom_config is not None:
         self.custom_config.load(self)
       
@@ -125,27 +137,20 @@ class VizdoomEnv(gym.Env):
           num_channels += 3
         else:
           num_channels += 1
-          
       if self.depth:
+        num_channels += 1
+      if self.automap:
         num_channels += 1
         
       list_spaces: List[gym.Space] = [
-        spaces.Box(0, 255,
-          (
+        spaces.Box(0, 255, (
             self.game.get_screen_height(),
             self.game.get_screen_width(),
             num_channels,
-          ), dtype=np.uint8,
-        )
+          ), dtype=np.uint8)
       ]
-      
       if self.custom_config is not None:
         list_spaces += self.custom_config.game_variable_spaces()
-
-      #if self.position:
-      #  list_spaces.append(spaces.Box(-np.Inf, np.Inf, (4,)))
-      #if self.health:
-      #  list_spaces.append(spaces.Box(0, np.Inf, (1,)))
 
       self.observation_space = spaces.Tuple(list_spaces)
 
@@ -201,6 +206,8 @@ class VizdoomEnv(gym.Env):
       self.state = self.game.get_state()
       done = self.game.is_episode_finished()
       info = {"dummy": 0.0}
+      #if done:
+      #  info["map_complete"] = 1 if self.is_map_ended() else 0 
 
       return self.__collect_observations(), reward, done, info
 
@@ -208,9 +215,12 @@ class VizdoomEnv(gym.Env):
       try:
         self.game.new_episode()
         self.state = self.game.get_state()
+        if self.custom_config is not None:
+          self.custom_config.reset(self.game)
       except:
         print("Vizdoom window was closed, exiting.")
         exit(0)
+        
       return self.__collect_observations()
 
     def __collect_observations(self):
@@ -218,6 +228,7 @@ class VizdoomEnv(gym.Env):
       
       if self.state is not None:
         observation = np.transpose(self.state.screen_buffer, (1, 2, 0))
+        
         if self.depth:
           cat_axis = self.state.depth_buffer.ndim
           depth_observation = np.expand_dims(self.state.depth_buffer, cat_axis)
@@ -236,7 +247,13 @@ class VizdoomEnv(gym.Env):
           else: 
             labels_observation = np.expand_dims(self.state.labels_buffer, cat_axis)
           observation = np.concatenate([observation, labels_observation], cat_axis)
-          
+        
+        if self.automap:
+          automap_obs = torch.tensor(self.state.automap_buffer, dtype=torch.float)
+          automap_obs = (T.Grayscale()(automap_obs)).numpy()
+          automap_obs = np.transpose(automap_obs, (1, 2, 0))
+          observation = np.concatenate([observation, automap_obs], 2)
+        
         observations.append(observation)
 
         if self.custom_config is not None:
@@ -315,6 +332,7 @@ class VizdoomEnv(gym.Env):
           do_speed_check  = vzd.Button.SPEED in button_dict
           self.button_map = []
           for action in itertools.product((0, 1), repeat=self.num_binary_buttons):
+            
             if (self.max_buttons_pressed >= sum(action) >= 0):
               # You don't turn/move left and turn right simulateously...
               if do_strafe_check and action[button_dict[vzd.Button.MOVE_LEFT]] == 1 and action[button_dict[vzd.Button.MOVE_RIGHT]] == 1:
@@ -328,23 +346,27 @@ class VizdoomEnv(gym.Env):
               elif do_atkuse_check and action[button_dict[vzd.Button.ATTACK]] == 1 and action[button_dict[vzd.Button.USE]] == 1:
                 continue
               
-              elif do_speed_check and action[button_dict[vzd.Button.SPEED]] == 1:
-                # speed is not a standalone action...
-                if sum(action) == 1: continue 
-                # speed must be used in combination with actual movement...
-                if (do_strafe_check and action[button_dict[vzd.Button.MOVE_LEFT]] != 1 and action[button_dict[vzd.Button.MOVE_RIGHT]] != 1) \
-                   and (do_fwbk_check and action[button_dict[vzd.Button.MOVE_FORWARD]] != 1 and action[button_dict[vzd.Button.MOVE_BACKWARD]] != 1):
-                  continue
+              elif do_speed_check:
+                if action[button_dict[vzd.Button.SPEED]] == 1:
+                  # speed is not a standalone action...
+                  if sum(action) == 1: continue 
+                  # speed must be used in combination with actual movement...
+                  if self.always_run or (do_strafe_check and action[button_dict[vzd.Button.MOVE_LEFT]] != 1 and action[button_dict[vzd.Button.MOVE_RIGHT]] != 1) \
+                    and (do_fwbk_check and action[button_dict[vzd.Button.MOVE_FORWARD]] != 1 and action[button_dict[vzd.Button.MOVE_BACKWARD]] != 1) \
+                    and (do_turn_check and action[button_dict[vzd.Button.TURN_LEFT]] != 1 and action[button_dict[vzd.Button.TURN_RIGHT]] != 1):
+                    continue
               
+              action_list = list(action)
               # Make sure any action that involves movement also has speed activated when always_run is on
               if self.always_run and do_speed_check:
                 is_strafing = do_strafe_check and (action[button_dict[vzd.Button.MOVE_LEFT]] == 1 or action[button_dict[vzd.Button.MOVE_RIGHT]] == 1)
                 is_movingfb = do_fwbk_check and (action[button_dict[vzd.Button.MOVE_FORWARD]] == 1 or action[button_dict[vzd.Button.MOVE_BACKWARD]] == 1)
-                if is_strafing or is_movingfb:
-                  action[button_dict[vzd.Button.SPEED]] = 1
+                is_turning  = do_turn_check and (action[button_dict[vzd.Button.TURN_LEFT]] == 1 or action[button_dict[vzd.Button.TURN_RIGHT]] == 1)
+                if is_strafing or is_movingfb or is_turning:
+                  action_list[button_dict[vzd.Button.SPEED]] = 1
               
-              self.button_map.append(np.array(list(action)))
-              
+              self.button_map.append(np.array(action_list))
+          assert len(np.unique(self.button_map, axis=1)) == len(self.button_map)
           self.button_map = self.button_map[1:] # Remove the no-action/noop row
         else:
           self.button_map = [

@@ -10,7 +10,11 @@ class DoomObservation(gym.ObservationWrapper):
     super().__init__(env)
     self.shape = shape
     obs_shape = (self.observation_space[0].shape[-1],) + self.shape
-    self.observation_space = gym.spaces.Tuple([gym.spaces.Box(low=0.0, high=1.0, shape=obs_shape, dtype=np.float32), *self.observation_space[1:]])
+    obs_space_list = [
+      gym.spaces.Box(low=0.0, high=1.0, shape=obs_shape, dtype=np.float32), 
+      self.observation_space[1]
+    ]
+    self.observation_space = gym.spaces.Tuple(obs_space_list)
 
   def permute_observation(self, observation):
     observation = np.transpose(observation, (2,0,1))
@@ -19,7 +23,8 @@ class DoomObservation(gym.ObservationWrapper):
   
   def observation(self, observation):
     obs = self.permute_observation(observation[0])
-    observation[0] = T.Resize(self.shape, T.InterpolationMode.NEAREST)(obs).squeeze(0).numpy() / 255.0
+    obs = T.Resize(self.shape, T.InterpolationMode.NEAREST)(obs).squeeze(0) / 255.0
+    observation[0] = obs.numpy()
     return observation
 
 

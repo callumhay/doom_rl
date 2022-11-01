@@ -2,14 +2,14 @@
 import gym
 import vizdoom as vzd
 import numpy as np
-from doom_reward_vars import DoomReward, DoomRewardVar, DoomPosRewardVar
+from doom_reward_vars import DoomReward, DoomRewardVar, DoomAdvancedPosRewardVar
 
-_living_reward = -0.0025
+_living_reward = -0.01
 _kill_reward   = 5.0
 _death_penalty  = 5.0
-_map_completed_reward = 10.0
-_timeout_reward = -5.0
-_episode_timeout = 30000
+_map_completed_reward = 100.0
+_timeout_reward = 0 # NOTE: Having a timeout reward is detrimental to convergence!
+_episode_timeout = 9999999
 
 # Custom config class for the vizdoomenv
 class DoomGeneralEnvConfig(object):
@@ -24,9 +24,8 @@ class DoomGeneralEnvConfig(object):
     game.set_doom_map(self.map)
     game.set_mode(vzd.Mode.PLAYER)
     game.set_episode_timeout(_episode_timeout)
-    
-    game.set_render_hud(True)
-    game.set_render_minimal_hud(False)
+    game.set_render_hud(False)
+    #game.set_render_minimal_hud(True)
     game.set_render_decals(True)
     game.set_render_particles(True)
     game.set_render_effects_sprites(True)
@@ -77,7 +76,7 @@ class DoomGeneralEnvConfig(object):
     # Reward functions (how we calculate the reward when specific game variables change)
     health_reward_func     = lambda oldHealth, newHealth: (0.2 if newHealth > oldHealth else 0.1) * (newHealth-oldHealth)
     armor_reward_func      = lambda oldArmor, newArmor: (0.1 if newArmor > oldArmor else 0.0) * (newArmor-oldArmor)
-    item_reward_func       = lambda oldItemCount, newItemCount: max(0.0, newItemCount-oldItemCount)
+    item_reward_func       = lambda oldItemCount, newItemCount: max(0.0, 0.1*(newItemCount-oldItemCount))
     secrets_reward_func    = lambda oldNumSecrets, newNumSecrets: max(0.0, newNumSecrets-oldNumSecrets)
     dmg_reward_func        = lambda oldDmg, newDmg: max(0.0, 0.01*(newDmg-oldDmg))
     kill_count_reward_func = lambda oldKillCount, newKillCount: max(0, _kill_reward*(newKillCount-oldKillCount))
@@ -98,15 +97,17 @@ class DoomGeneralEnvConfig(object):
       DoomRewardVar(vzd.GameVariable.ARMOR, armor_reward_func),
       DoomRewardVar(vzd.GameVariable.ITEMCOUNT, item_reward_func),
       DoomRewardVar(ammo_vars, ammo_reward_func),
-      DoomPosRewardVar(),
+      DoomAdvancedPosRewardVar(),
     ]
     
   def game_variable_spaces(self):
     spaces = []
-    '''
-    spaces.append(spaces.Box(-np.Inf, np.Inf, (6,)))
-    '''
+    spaces.append(gym.spaces.Box(0.0, 1.0, (3,)))
     return spaces
+  
+  def reset(self, game):
+    for reward_var in self.reward_vars:
+      reward_var.reinit(game)
   
   def step_reward(self, game):
     reward = 0.0
@@ -116,15 +117,15 @@ class DoomGeneralEnvConfig(object):
   
   def game_variable_observations(self, game):
     obs = []
-    '''
+
     #max_excl_pos   = 101 
     obs.append(np.array([
       #game.get_game_variable(vzd.GameVariable.POSITION_X) % max_excl_pos,
       #game.get_game_variable(vzd.GameVariable.POSITION_Y) % max_excl_pos,
       #game.get_game_variable(vzd.GameVariable.POSITION_Z) % max_excl_pos,
       (game.get_game_variable(vzd.GameVariable.ANGLE) / 360.0) % 1.0,
-      max(100, game.get_game_variable(vzd.GameVariable.HEALTH)) / 100.0,
-      max(100, game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)) / 100.0,
+      min(100, game.get_game_variable(vzd.GameVariable.HEALTH)) / 100.0,
+      min(100, game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)) / 100.0,
     ]))
-    '''
+
     return obs

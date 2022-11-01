@@ -52,7 +52,6 @@ class ResnetBlock(nn.Module):
     self.norm1 = _normalize(in_channels)
     self.conv1 = conv_layer_init(torch.nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1))
     
-
     self.norm2 = _normalize(out_channels)
     self.dropout = torch.nn.Dropout(dropout)
     self.conv2 = torch.nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1)
@@ -124,11 +123,10 @@ class SDEncoder(nn.Module):
   def __init__(self, args, envs):
     super().__init__()
     
-    num_res_blocks = 1 #args.num_res_blocks
-    ch_mult = [1,2,2]  #args.ch_mult
+    ch_mult = args.ch_mult
     dropout = 0.0 #args.dropout
-    starting_channels = 32 #args.starting_channels
-    z_channels = 8 #args.z_channels
+    starting_channels = args.starting_channels
+    z_channels = args.z_channels
 
     in_channels, res_h, res_w = envs.single_observation_space[0].shape
     self.num_resolutions = len(ch_mult)
@@ -137,8 +135,8 @@ class SDEncoder(nn.Module):
     net_output_size = args.net_output_size
 
     self.ch = starting_channels
-    self.num_res_blocks = num_res_blocks
-    self.res_block_ch_inds = set([1]) # Which levels the resnet(s) are present on
+    self.num_res_blocks = args.num_res_blocks
+    self.res_block_ch_inds = set([1,2])#set(list(range(len(ch_mult)))) # Which levels the resnet(s) are present on
     self.in_channels = in_channels
 
     # downsampling
