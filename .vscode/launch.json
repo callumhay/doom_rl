@@ -26,9 +26,13 @@
       "request": "launch",
       "program": "${file}",
       "args": [
-        //"--model",
-        //"./runs/VizdoomDoomGame-v0__doom_ppo__1__1667250677/doom_ppo_agent_9600000.chkpt",
-        "--anneal-lr", "False"
+        "--gym-id", "VizdoomCorridor-v0",
+        "--smart-actions", "False", "--always-run", "False",
+        "--multidiscrete-actions", "True",
+
+        //"--model", "./runs/VizdoomDoomGame-v0__doom_ppo_rnd__42__1667996811/doom_ppo_agent_3200000.chkpt",
+        "--num-envs", "20",
+        "--num-steps", "256"
       ],
       "cwd": "${fileDirname}",
       "console": "integratedTerminal",

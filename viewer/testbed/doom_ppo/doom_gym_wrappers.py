@@ -9,6 +9,7 @@ class DoomObservation(gym.ObservationWrapper):
   def __init__(self, env, shape) -> None:
     super().__init__(env)
     self.shape = shape
+    self.label_channel = env.label_channel
     obs_shape = (self.observation_space[0].shape[-1],) + self.shape
     obs_space_list = [
       gym.spaces.Box(low=0.0, high=1.0, shape=obs_shape, dtype=np.float32), 
@@ -24,6 +25,11 @@ class DoomObservation(gym.ObservationWrapper):
   def observation(self, observation):
     obs = self.permute_observation(observation[0])
     obs = T.Resize(self.shape, T.InterpolationMode.NEAREST)(obs).squeeze(0) / 255.0
+    
+    # Make any relevant label masks completely white
+    if self.label_channel >= 0:
+      obs[self.label_channel,:,:] = (obs[self.label_channel,:,:] - 3.0/255.0).ceil()
+    
     observation[0] = obs.numpy()
     return observation
 
@@ -76,3 +82,68 @@ class DoomMaxAndSkipEnv(gym.Wrapper):
 
   def reset(self, **kwargs) -> GymObs:
     return self.env.reset(**kwargs)
+  
+  
+  
+  # taken from https://github.com/openai/baselines/blob/master/baselines/common/vec_env/vec_normalize.py
+class RunningMeanStd(object):
+    # https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance#Parallel_algorithm
+    def __init__(self, epsilon=1e-4, shape=()):
+      self.epsilon = epsilon
+      self.shape = shape
+      self.reset()
+        
+    def reset(self):
+      self.mean = np.zeros(self.shape, "float64")
+      self.var = np.ones(self.shape, "float64")
+      self.count = self.epsilon
+      
+    def update(self, x):
+      batch_mean = np.mean(x, axis=0)
+      batch_var = np.var(x, axis=0)
+      batch_count = x.shape[0]
+      self.update_from_moments(batch_mean, batch_var, batch_count)
+
+    def update_from_moments(self, batch_mean, batch_var, batch_count):
+      self.mean, self.var, self.count = update_mean_var_count_from_moments(
+          self.mean, self.var, self.count, batch_mean, batch_var, batch_count
+      )
+
+
+def update_mean_var_count_from_moments(
+    mean, var, count, batch_mean, batch_var, batch_count
+):
+  delta = batch_mean - mean
+  tot_count = count + batch_count
+
+  new_mean = mean + delta * batch_count / tot_count
+  m_a = var * count
+  m_b = batch_var * batch_count
+  M2 = m_a + m_b + np.square(delta) * count * batch_count / tot_count
+  new_var = M2 / tot_count
+  new_count = tot_count
+
+  return new_mean, new_var, new_count
+
+  
+class DoomNormalizeReward(gym.core.Wrapper):
+  def __init__(self, env, epsilon=1e-8, clip=10):
+    super(DoomNormalizeReward, self).__init__(env)
+    self.num_envs = getattr(env, "num_envs", 1)
+    self.is_vector_env = getattr(env, "is_vector_env", False)
+    self.return_rms = RunningMeanStd(shape=())
+    self.epsilon = epsilon
+    self.clip = clip
+
+  def step(self, action):
+    obs, rews, dones, infos = self.env.step(action)
+    if not self.is_vector_env:
+      rews = np.array([rews])
+    rews = np.clip(self.normalize(rews), -self.clip, self.clip)
+    if not self.is_vector_env:
+      rews = rews[0]
+    return obs, rews, dones, infos
+
+  def normalize(self, rews):
+    self.return_rms.update(rews)
+    return rews / np.sqrt(self.return_rms.var + self.epsilon)

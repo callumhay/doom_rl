@@ -4,18 +4,19 @@ import vizdoom as vzd
 import numpy as np
 from doom_reward_vars import DoomReward, DoomRewardVar, DoomAdvancedPosRewardVar
 
-_living_reward = -0.01
 _kill_reward   = 5.0
 _death_penalty  = 5.0
 _map_completed_reward = 100.0
 _timeout_reward = 0 # NOTE: Having a timeout reward is detrimental to convergence!
-_episode_timeout = 9999999
+_episode_timeout = 9999999 # NOTE: Having a really long timeout is beneficial to convergence in the general case
 
 # Custom config class for the vizdoomenv
 class DoomGeneralEnvConfig(object):
   
-  def __init__(self, map:str) -> None:
+  def __init__(self, map:str, disable_explore_reward:bool=False, living_reward=0) -> None:
     self.map = map
+    self.disable_explore_reward = disable_explore_reward
+    self.living_reward = living_reward
     self.reward_vars = []
   
   def load(self, env) -> None:
@@ -24,7 +25,7 @@ class DoomGeneralEnvConfig(object):
     game.set_doom_map(self.map)
     game.set_mode(vzd.Mode.PLAYER)
     game.set_episode_timeout(_episode_timeout)
-    game.set_render_hud(False)
+    game.set_render_hud(True)
     #game.set_render_minimal_hud(True)
     game.set_render_decals(True)
     game.set_render_particles(True)
@@ -85,7 +86,7 @@ class DoomGeneralEnvConfig(object):
     map_complete_reward_func = lambda _: _map_completed_reward if env.is_map_ended() else 0.0
     timeout_reward_func      = lambda _: _timeout_reward if not env.is_map_ended() and env.is_episode_finished() else 0.0
     game.set_death_penalty(_death_penalty)
-    game.set_living_reward(_living_reward)
+    game.set_living_reward(self.living_reward)
     
     self.reward_vars = [
       DoomReward(map_complete_reward_func),
@@ -97,8 +98,9 @@ class DoomGeneralEnvConfig(object):
       DoomRewardVar(vzd.GameVariable.ARMOR, armor_reward_func),
       DoomRewardVar(vzd.GameVariable.ITEMCOUNT, item_reward_func),
       DoomRewardVar(ammo_vars, ammo_reward_func),
-      DoomAdvancedPosRewardVar(),
     ]
+    if not self.disable_explore_reward:
+      self.reward_vars.append(DoomAdvancedPosRewardVar())
     
   def game_variable_spaces(self):
     spaces = []

@@ -131,16 +131,27 @@ class VizdoomEnv(gym.Env):
 
       # specify observation space(s)
       num_channels = self.game.get_screen_channels()
-      
+
+      if self.depth:
+        self.depth_channel = num_channels
+        num_channels += 1
+      else:
+        self.depth_channel = -1
+
       if self.labels:
+        self.label_channel = num_channels
         if self.split_labels:
           num_channels += 3
         else:
-          num_channels += 1
-      if self.depth:
-        num_channels += 1
+          num_channels += 1 
+      else: 
+        self.label_channel = -1
+      
       if self.automap:
+        self.automap_channel = num_channels
         num_channels += 1
+      else:
+        self.automap_channel = -1
         
       list_spaces: List[gym.Space] = [
         spaces.Box(0, 255, (
@@ -151,6 +162,11 @@ class VizdoomEnv(gym.Env):
       ]
       if self.custom_config is not None:
         list_spaces += self.custom_config.game_variable_spaces()
+      else:
+        list_spaces.append(gym.spaces.Box(0.0, 1.0, (3,)))
+        self.game.add_available_game_variable(vzd.GameVariable.ANGLE) 
+        self.game.add_available_game_variable(vzd.GameVariable.HEALTH) 
+        self.game.add_available_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)
 
       self.observation_space = spaces.Tuple(list_spaces)
 
@@ -245,7 +261,7 @@ class VizdoomEnv(gym.Env):
             labels_observation = -(_mapping[self.state.labels_buffer] == np.arange(1,4)[:,None,None]).astype(np.uint8) / 255.0
             labels_observation = np.transpose(labels_observation, (1, 2, 0))
           else: 
-            labels_observation = np.expand_dims(self.state.labels_buffer, cat_axis)
+            labels_observation = np.expand_dims(self.state.labels_buffer, cat_axis)#np.expand_dims((self.state.labels_buffer>3)*255, cat_axis)
           observation = np.concatenate([observation, labels_observation], cat_axis)
         
         if self.automap:
@@ -258,6 +274,15 @@ class VizdoomEnv(gym.Env):
 
         if self.custom_config is not None:
           observations += self.custom_config.game_variable_observations(self.game)
+        else:
+          observations.append(np.array([
+            #game.get_game_variable(vzd.GameVariable.POSITION_X) % max_excl_pos,
+            #game.get_game_variable(vzd.GameVariable.POSITION_Y) % max_excl_pos,
+            #game.get_game_variable(vzd.GameVariable.POSITION_Z) % max_excl_pos,
+            (self.game.get_game_variable(vzd.GameVariable.ANGLE) / 360.0) % 1.0,
+            min(100, self.game.get_game_variable(vzd.GameVariable.HEALTH)) / 100.0,
+            min(100, self.game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)) / 100.0,
+          ]))
 
       else:
         # There is no state in the terminal step, so a "zero observation is returned instead"
@@ -345,6 +370,7 @@ class VizdoomEnv(gym.Env):
               # You don't shoot and use simultaneously...
               elif do_atkuse_check and action[button_dict[vzd.Button.ATTACK]] == 1 and action[button_dict[vzd.Button.USE]] == 1:
                 continue
+              
               
               elif do_speed_check:
                 if action[button_dict[vzd.Button.SPEED]] == 1:

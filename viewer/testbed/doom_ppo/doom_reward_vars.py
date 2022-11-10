@@ -78,7 +78,7 @@ class DoomPosRewardVar(object):
 class DoomAdvancedPosRewardVar(object):
   _SECTOR_SIZE = 50
   _EXPLORE_SECTOR_REWARD = 0.1
-  _REVISIT_SECTOR_REWARD = -0.1
+  _REVISIT_SECTOR_REWARD = 0#-0.1 # NOTE: Having a penalty here appears to keep convergence from happening? 
   _PUNISHMENT_INCREMENT_GAME_SECONDS_COEF = 15 # If an agent returns to a sector after this amount of elapsed game time, increment visits
   _REVISITS_INC_THRESHOLD = 3 # Number of times the agent has to revisit a sector before revisit reward
   
@@ -123,7 +123,7 @@ class DoomAdvancedPosRewardVar(object):
         if y0 not in self.explored_map[x0]:
           self.explored_map[x0][y0] = [1, game.get_episode_time()]
           reward += self._EXPLORE_SECTOR_REWARD
-        else:
+        elif self._REVISIT_SECTOR_REWARD != 0:
           # If the agent continually revisits the same sector we punish them
           visits, prev_visit_step = self.explored_map[x0][y0]
           curr_steps = game.get_episode_time()
