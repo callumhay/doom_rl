@@ -160,10 +160,10 @@ class Agent(nn.Module):
     self.pixel_convnet = SDEncoder(args, envs)
     '''
     if args.automap:
-      out_channel_list = [32, 64, 64] # Original was [32, 64, 64]
-      kernel_size_list = [ 8,  4,  3] # Original was [ 8,  4,  3]
-      stride_list      = [ 4,  2,  1] # Original was [ 4,  2,  1]
-      padding_list     = [ 0,  0,  0] # Original was [ 0,  0,  0]
+      out_channel_list = [32, 64, 64]
+      kernel_size_list = [ 8,  4,  3]
+      stride_list      = [ 4,  2,  1]
+      padding_list     = [ 0,  0,  0]
       
       self.automap_conv = nn.Sequential()
       curr_channels, curr_height, curr_width = envs.single_observation_space[2].shape

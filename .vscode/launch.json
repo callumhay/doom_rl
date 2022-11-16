@@ -26,12 +26,13 @@
       "request": "launch",
       "program": "${file}",
       "args": [
-        //"--gym-id", "VizdoomCorridor-v0",
-        //"--smart-actions", "False", 
-        //"--multidiscrete-actions", "True",
+        "--gym-id", "VizdoomCorridor-v0",
+        "--smart-actions", "False", 
+        "--multidiscrete-actions", "True",
+
         "--always-run", "False",
-        "--model", "./runs/VizdoomDoomGame-v0/VizdoomDoomGame-v0_doom_ppo_rnd_seed42_E1M2_levelpasser_notgeneralized-part4/doom_ppo_agent_47000000.chkpt",
-        "--map", "E1M2",
+        //"--model", "./runs/VizdoomDoomGame-v0/VizdoomDoomGame-v0_doom_ppo_rnd_seed42_E1M2_notgeneralized-part5/doom_ppo_agent_56000000.chkpt",
+        //"--map", "E1M2",
         "--num-envs", "20",
         "--num-steps", "256"
       ],

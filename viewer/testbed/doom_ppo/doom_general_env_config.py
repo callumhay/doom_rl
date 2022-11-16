@@ -7,8 +7,8 @@ from doom_reward_vars import DoomReward, DoomRewardVar, DoomAdvancedPosRewardVar
 _kill_reward    = 5.0
 _death_penalty  = 5.0
 _map_completed_reward = 100.0
-_timeout_reward  = 0      # NOTE: Having ANY timeout reward is detrimental to convergence!
-_episode_timeout = 100000 # NOTE: Having a really long timeout is beneficial to convergence in the general case
+_timeout_reward  = 0     # NOTE: Having ANY timeout reward is detrimental to convergence!
+_episode_timeout = 25000 # NOTE: Having a really long timeout is beneficial to convergence in the general case
 
 # Custom config class for the vizdoomenv
 class DoomGeneralEnvConfig(object):
@@ -77,7 +77,7 @@ class DoomGeneralEnvConfig(object):
     # Reward functions (how we calculate the reward when specific game variables change)
     health_reward_func     = lambda oldHealth, newHealth: (0.1 if newHealth > oldHealth else 0.1) * (newHealth-oldHealth)
     armor_reward_func      = lambda oldArmor, newArmor: (0.01 if newArmor > oldArmor else 0.0) * (newArmor-oldArmor)
-    item_reward_func       = lambda oldItemCount, newItemCount: max(0.0, 0.01*(newItemCount-oldItemCount))
+    item_reward_func       = lambda oldItemCount, newItemCount: max(0.0, 1*(newItemCount-oldItemCount))
     secrets_reward_func    = lambda oldNumSecrets, newNumSecrets: max(0.0, newNumSecrets-oldNumSecrets)
     dmg_reward_func        = lambda oldDmg, newDmg: max(0.0, 0.1*(newDmg-oldDmg))
     kill_count_reward_func = lambda oldKillCount, newKillCount: max(0, _kill_reward*(newKillCount-oldKillCount))
@@ -120,18 +120,19 @@ class DoomGeneralEnvConfig(object):
   def game_variable_observations(self, game):
     obs = []
     
-    x = min(16384, max(0, game.get_game_variable(vzd.GameVariable.POSITION_X)))
-    y = min(16384, max(0, game.get_game_variable(vzd.GameVariable.POSITION_Y)))
-
-    x_macro = x // 128 # 128 possible values
+    MAX_COORD = 16256
+    x = min(MAX_COORD, max(0, game.get_game_variable(vzd.GameVariable.POSITION_X)))
+    y = min(MAX_COORD, max(0, game.get_game_variable(vzd.GameVariable.POSITION_Y)))
+    assert x != MAX_COORD and y != MAX_COORD
+    x_macro = x // 128 # 128 possible values [0,127]
     y_macro = y // 128
-    x_micro = x % 128  # 128 possible values
+    x_micro = x % 128  # 128 possible values [0,127]
     y_micro = y % 128
 
     obs.append(np.array([
-      (game.get_game_variable(vzd.GameVariable.ANGLE) / 360.0) % 1.0,
-      min(100, game.get_game_variable(vzd.GameVariable.HEALTH)) / 100.0,
-      min(100, game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)) / 100.0,
+      127 * ((game.get_game_variable(vzd.GameVariable.ANGLE) / 360.0) % 1.0),
+      127 * (min(100, game.get_game_variable(vzd.GameVariable.HEALTH)) / 100.0),
+      127 * (min(100, game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)) / 100.0),
       x_macro, y_macro, x_micro, y_micro
     ]))
 

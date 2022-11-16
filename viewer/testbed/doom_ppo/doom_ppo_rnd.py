@@ -18,7 +18,7 @@ import vizdoom as vzd
 import vizdoomgym
 VIZDOOM_GAME_PATH = "_vizdoom"
 
-from net_init import fc_layer_init, fc_layer_init_norm
+from net_init import fc_layer_init, fc_layer_init_norm, simple_conv_net, fc_layer_init_xavier
 from sd_conv import SDEncoder
 from doom_gym_wrappers import DoomMaxAndSkipEnv, DoomObservation, DoomNormalizeReward, DoomNormalizeObservation
 from doom_general_env_config import DoomGeneralEnvConfig
@@ -112,7 +112,7 @@ def parse_args():
   # Network specific arguments
   parser.add_argument("--z-channels", type=int, default=48, help="Number of z-channels on the last layer of the convolutional network")
   parser.add_argument("--net-output-size", type=int, default=4605, help="Output size of the convolutional network, input size to the LSTM")
-  parser.add_argument("--lstm-hidden-size", type=int, default=1152, help="Hidden size of the LSTM")
+  parser.add_argument("--lstm-hidden-size", type=int, default=1208, help="Hidden size of the LSTM")
   parser.add_argument("--lstm-num-layers", type=int, default=1, help="Number of layers in the LSTM") # NOTE: More than one layer doesn't appear to have any benefit
   parser.add_argument("--lstm-dropout", type=float, default=0.0, help="Dropout fraction [0,1] in the LSTM")
   parser.add_argument("--obs-shape", type=str, default="60,80", # 60,80 works well, 69,92 doesn't appear to help convergence... 
@@ -124,12 +124,12 @@ def parse_args():
   parser.add_argument("--rnd-output-size", type=int, default=512, help="Output size of the predictor and target networks")
   
   # Algorithm specific arguments
+  parser.add_argument("--num-explore-steps", type=int, default=1000, help="the number of pre-training steps to initialize the normalizers for rewards")
   parser.add_argument("--num-envs", type=int, default=20, help="the number of parallel game environments")
-  parser.add_argument("--num-steps", type=int, default=256,
-      help="the number of steps to run in each environment per policy rollout")
+  parser.add_argument("--num-steps", type=int, default=256, help="the number of steps to run in each environment per policy rollout")
   parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
       help="Toggle learning rate annealing for policy and value networks")
-  parser.add_argument("--reward-i-coeff", type=float, default=0.0075, help="Coefficient for the intrinsic reward to balance it with the extrinsic reward")
+  parser.add_argument("--reward-i-coeff", type=float, default=1, help="Coefficient for the intrinsic reward to balance it with the extrinsic reward")
   parser.add_argument("--gamma-e", type=float, default=0.999, help="the discount factor gamma for extrinsic rewards")
   parser.add_argument("--gamma-i", type=float, default=0.99, help="the discount factor gamma for intrinsic rewards")
   parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -200,7 +200,11 @@ class Agent(nn.Module):
     lstm_hidden_size = args.lstm_hidden_size
     
     self.pixel_convnet = SDEncoder(args, envs)
-    self.game_var_size = envs.single_observation_space[1].shape[0]
+    
+    EMBED_SIZE = 32
+    self.pos_embeddings = nn.ModuleList([nn.Embedding(128, EMBED_SIZE) for _ in range(envs.single_observation_space[1].shape[0])])
+    self.game_var_size = envs.single_observation_space[1].shape[0] * EMBED_SIZE
+    
     lstm_input_size = net_output_size + self.game_var_size
     
     self.pt_downsample_size = list(envs.single_observation_space[0].shape)
@@ -209,10 +213,18 @@ class Agent(nn.Module):
     self.pt_downsample_size[2] //= 2
     self.pt_input_size = np.prod(self.pt_downsample_size, dtype=np.int32)
     
-    #self.pos_embeddings = [nn.Embedding(128, 32) for _ in range(4)]
+    # Use convolution nets with linear output for the target and predictor networks
+    self.target_rnd_net, _ = simple_conv_net(envs.single_observation_space[0].shape, args.rnd_output_size)
+    # Beef-up the predictor so that it can overfit the target
+    self.predictor_rnd_net, pred_out_size = simple_conv_net(envs.single_observation_space[0].shape, None)
+    self.predictor_rnd_net.append(fc_layer_init_xavier(nn.Linear(pred_out_size, args.rnd_output_size), 'relu'))
+    self.predictor_rnd_net.append(nn.ReLU(inplace=True))
+    #self.predictor_rnd_net.append(fc_layer_init_xavier(nn.Linear(args.rnd_output_size, args.rnd_output_size), 'relu'))
+    #self.predictor_rnd_net.append(nn.ReLU(inplace=True))
+    self.predictor_rnd_net.append(fc_layer_init_norm(nn.Linear(args.rnd_output_size, args.rnd_output_size)))
     
-    self.target_rnd_net    = fc_layer_init_norm(nn.Linear(self.pt_input_size, args.rnd_output_size), 1, 0.1)
-    self.predictor_rnd_net = fc_layer_init_norm(nn.Linear(self.pt_input_size, args.rnd_output_size), 1, 0.1)
+    #self.target_rnd_net    = fc_layer_init_norm(nn.Linear(self.pt_input_size, args.rnd_output_size))
+    #self.predictor_rnd_net = fc_layer_init_norm(nn.Linear(self.pt_input_size, args.rnd_output_size))
     
     # Freeze the target network
     for p in self.target_rnd_net.parameters():
@@ -240,12 +252,14 @@ class Agent(nn.Module):
   def get_states(self, visual_obs, gamevars_obs, lstm_state, done):
     pixel_conv_out = self.pixel_convnet(visual_obs)
     
-    ori_health_ammo_vars, pos_vars = torch.split(gamevars_obs, (3,4))
-    # Embed the positional variables
-    #pos_embed = torch.stack([self.pos_embeddings(t) for t in pos_vars]).flatten()
+    var_tuples = torch.chunk(gamevars_obs, len(self.pos_embeddings), -1)
+    embed = torch.cat([self.pos_embeddings[i](t.int()).squeeze(1) for i,t in enumerate(var_tuples)], -1) # Embed the game variables
+    hidden = torch.cat([pixel_conv_out, embed], -1) # Put it all together for input to LSTM
     
-    
-    hidden = torch.cat([pixel_conv_out, ori_health_ammo_vars], -1)
+    #ori_health_ammo_vars, pos_vars = torch.split(gamevars_obs, (3,4), dim=-1)
+    #pos_tuples = torch.chunk(pos_vars, 4, -1)
+    #pos_embed = torch.cat([self.pos_embeddings[i](t.int()).squeeze(1) for i,t in enumerate(pos_tuples)], -1) # Embed the positional variables
+    #hidden = torch.cat([pixel_conv_out, ori_health_ammo_vars, pos_embed], -1) # Put it all together for input to LSTM
     
     # LSTM logic
     batch_size = lstm_state[0].shape[1]
@@ -289,9 +303,11 @@ class Agent(nn.Module):
   def _intrinsic_reward(self, visual_obs):
     # NOTE: We don't want the predicted network backprop to affect the rest of the network!
     # Downsample the visual observation, but only the RGB part
-    downsampled_obs = (T.Resize(self.pt_downsample_size[-2:], T.InterpolationMode.BILINEAR)(visual_obs.detach()[:,0:3])).view(-1, self.pt_input_size)
-    pred_state = self.predictor_rnd_net(downsampled_obs)
-    targ_state = self.target_rnd_net(downsampled_obs)
+    #downsampled_obs = (T.Resize(self.pt_downsample_size[-2:], T.InterpolationMode.BILINEAR)(visual_obs.detach()[:,0:3])).view(-1, self.pt_input_size)
+    #pred_state = self.predictor_rnd_net(downsampled_obs)
+    #targ_state = self.target_rnd_net(downsampled_obs)
+    pred_state = self.predictor_rnd_net(visual_obs)
+    targ_state = self.target_rnd_net(visual_obs)
     return torch.mean(nn.functional.mse_loss(pred_state, targ_state.detach(), reduction='none'), dim=1)
     
 
@@ -348,18 +364,25 @@ if __name__ == "__main__":
     if os.path.exists(args.model):
       print(f"Model file '{args.model}' found, loading...")
       model_dict = torch.load(args.model)
-      init_step = model_dict["timesteps"]
-      global_step = init_step
-      args.total_timesteps += global_step
+
+      load_failed = False
       try:
         agent.load_state_dict(model_dict["agent"], strict=False)
       except RuntimeError as e:
         print("Could not load agent networks:")
         print(e)
-      optimizer.load_state_dict(model_dict["optim"])
-      if "lr" in model_dict:
-        args.learning_rate = model_dict["lr"]
-      print("Model loaded!")
+        load_failed = True
+      if not load_failed:
+        optimizer.load_state_dict(model_dict["optim"])
+        init_step = model_dict["timesteps"]
+        global_step = init_step
+        args.total_timesteps += global_step
+        if "lr" in model_dict:
+          args.learning_rate = model_dict["lr"]
+        print("Model loaded!")
+      else:
+        print("Model loaded with failures.")
+        
     else:
       print(f"Could not find/load model file '{args.model}'")
 
@@ -393,18 +416,15 @@ if __name__ == "__main__":
   
   cum_scores = np.zeros(args.num_envs, dtype=np.float64)
 
-  INTRINSIC_REWARD_CLIP = 100
-  EXPLORE_STEPS = 1000
-  
   # Run for some fixed number of steps on each environment in order to pre-load the normalizers 
   # of intrinsic and extrinsic rewards
-  print(f"Starting exploration for {EXPLORE_STEPS} steps...")
+  print(f"Starting exploration for {args.num_explore_steps} steps...")
   with torch.no_grad():
-    for _ in range(1000):
+    for _ in range(args.num_explore_steps):
       action, logprob, _, value_i_e, reward_i, next_lstm_state = agent.get_action_and_value(
         next_obs, next_gamevars, next_lstm_state, next_done
       )
-      reward_i_normalizer.normalize(np.clip(reward_i.cpu().numpy(), 0, INTRINSIC_REWARD_CLIP))
+      reward_i_normalizer.normalize(reward_i.cpu().numpy())
       next_obs_tuple, reward_e, done, info = envs.step(action.cpu().numpy())
       next_obs = torch.Tensor(next_obs_tuple[0]).to(device)
       next_gamevars = torch.Tensor(next_obs_tuple[1]).to(device)
@@ -414,9 +434,9 @@ if __name__ == "__main__":
   lrnow = args.learning_rate
   for update in range(1, num_updates + 1):
       initial_lstm_state = (next_lstm_state[0].clone(), next_lstm_state[1].clone())
-      # Annealing the rate if instructed to do so.
+
       if args.anneal_lr:
-        frac = 1.0 - (update - 1.0) / num_updates
+        frac = 1.0 - (update - 1.0) / (num_updates)
         lrnow = frac * args.learning_rate
         optimizer.param_groups[0]["lr"] = lrnow
 
@@ -443,7 +463,7 @@ if __name__ == "__main__":
             next_obs, next_gamevars, next_lstm_state, next_done
           )
           values_i_e[step] = value_i_e
-          reward_i_np = np.clip(reward_i.cpu().numpy(), 0, INTRINSIC_REWARD_CLIP) # Early intrinsic rewards can be very large, clip to avoid blowing-out the normalizer
+          reward_i_np = reward_i.cpu().numpy()
           reward_i_np_norm = np.clip(reward_i_normalizer.normalize(reward_i_np) * args.reward_i_coeff, 0, 5)
           total_rewards_i += reward_i_np
           total_rewards_i_norm += reward_i_np_norm

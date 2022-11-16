@@ -96,6 +96,7 @@ class VizdoomEnv(gym.Env):
       self.game.set_depth_buffer_enabled(self.depth)
       self.game.set_labels_buffer_enabled(self.labels)
       self.game.set_automap_buffer_enabled(self.automap)
+      #self.game.set_console_enabled(True)
       if self.automap:
         #self.game.set_render_hud(False)
         self.game.set_automap_mode(vzd.AutomapMode.OBJECTS_WITH_SIZE)
@@ -163,7 +164,9 @@ class VizdoomEnv(gym.Env):
       if self.custom_config is not None:
         list_spaces += self.custom_config.game_variable_spaces()
       else:
-        list_spaces.append(gym.spaces.Box(0.0, 1.0, (3,)))
+        list_spaces.append(gym.spaces.Box(0.0, 1.0, (7,)))
+        self.game.add_available_game_variable(vzd.GameVariable.POSITION_X)
+        self.game.add_available_game_variable(vzd.GameVariable.POSITION_Y)
         self.game.add_available_game_variable(vzd.GameVariable.ANGLE) 
         self.game.add_available_game_variable(vzd.GameVariable.HEALTH) 
         self.game.add_available_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)
@@ -275,13 +278,19 @@ class VizdoomEnv(gym.Env):
         if self.custom_config is not None:
           observations += self.custom_config.game_variable_observations(self.game)
         else:
+          MAX_COORD = 16256
+          x = min(MAX_COORD, max(0, self.game.get_game_variable(vzd.GameVariable.POSITION_X)))
+          y = min(MAX_COORD, max(0, self.game.get_game_variable(vzd.GameVariable.POSITION_Y)))
+          assert x != MAX_COORD and y != MAX_COORD
+          x_macro = x // 128 # 128 possible values
+          y_macro = y // 128
+          x_micro = x % 128  # 128 possible values
+          y_micro = y % 128
           observations.append(np.array([
-            #game.get_game_variable(vzd.GameVariable.POSITION_X) % max_excl_pos,
-            #game.get_game_variable(vzd.GameVariable.POSITION_Y) % max_excl_pos,
-            #game.get_game_variable(vzd.GameVariable.POSITION_Z) % max_excl_pos,
-            (self.game.get_game_variable(vzd.GameVariable.ANGLE) / 360.0) % 1.0,
-            min(100, self.game.get_game_variable(vzd.GameVariable.HEALTH)) / 100.0,
-            min(100, self.game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO)) / 100.0,
+            127 * ((self.game.get_game_variable(vzd.GameVariable.ANGLE) / 360.0) % 1.0),
+            127 * (min(100, self.game.get_game_variable(vzd.GameVariable.HEALTH))/100.0),
+            127 * (min(100, self.game.get_game_variable(vzd.GameVariable.SELECTED_WEAPON_AMMO))/100.0),
+            x_macro, y_macro, x_micro, y_micro
           ]))
 
       else:
