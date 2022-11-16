@@ -1,8 +1,8 @@
 import argparse
-from enum import auto
 import os
 import random
 import time
+import re
 from distutils.util import strtobool
 
 import gym
@@ -11,19 +11,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.categorical import Categorical
+from torchvision import transforms as T
 from torch.utils.tensorboard import SummaryWriter
 
 import vizdoom as vzd
 import vizdoomgym
 VIZDOOM_GAME_PATH = "_vizdoom"
 
-from stable_baselines3.common.atari_wrappers import (  # isort:skip
-  ClipRewardEnv,
-)
-
-from net_init import fc_layer_init, fc_layer_init_rnd
+from net_init import fc_layer_init, fc_layer_init_norm
 from sd_conv import SDEncoder
-from doom_gym_wrappers import DoomMaxAndSkipEnv, DoomObservation, DoomNormalizeReward
+from doom_gym_wrappers import DoomMaxAndSkipEnv, DoomObservation, DoomNormalizeReward, DoomNormalizeObservation
 from doom_general_env_config import DoomGeneralEnvConfig
 
 
@@ -65,7 +62,7 @@ class RunningMeanStd(object):
     return new_mean, new_var, new_count
         
 class SimpleNormalizeReward(object):
-    def __init__(self, epsilon=1e-8):
+    def __init__(self, num_envs, epsilon=1e-8):
         super(SimpleNormalizeReward, self).__init__()
         self.return_rms = RunningMeanStd(shape=())
         self.epsilon = epsilon
@@ -85,7 +82,7 @@ def parse_args():
   parser.add_argument("--gym-id", type=str, default="VizdoomDoomGame-v0", help="the id of the gym environment")
   parser.add_argument("--learning-rate", type=float, default=2.5e-4, help="the learning rate of the optimizer")
   parser.add_argument("--seed", type=int, default=42, help="RNG seed of the experiment")
-  parser.add_argument("--total-timesteps", type=int, default=10000000,
+  parser.add_argument("--total-timesteps", type=int, default=100000000,
       help="total timesteps of the experiments")
   parser.add_argument("--save-timesteps", type=int, default=50000, help="Timesteps between network saves")
   parser.add_argument("--torch-deterministic", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
@@ -102,11 +99,12 @@ def parse_args():
       help="weather to capture videos of the agent performances (check out `videos` folder)")
 
   # Game specific arguments
+  parser.add_argument("--map", type=str, default="MAP01", help="The map to load when playing the regular doom game scenario")
   parser.add_argument("--multidiscrete-actions", type=bool, default=False, 
     help="Whether the agent uses multidiscrete actions (up to 2 at a time) or not - this is disabled automatically if smart-actions are enabled.") # NOTE: Multidiscrete converges faster!
   parser.add_argument("--smart-actions", type=bool, default=True,
     help="Whether to use smart multdiscrete actions (e.g., you don't move left and right simulataneously), this limits actions to 2 at a time.")
-  parser.add_argument("--always-run", type=bool, default=True, help="Whether all move actions are always done with speed/run")
+  parser.add_argument("--always-run", type=bool, default=False, help="Whether all move actions are always done with speed/run")
   parser.add_argument("--automap", type=bool, default=False, help="Whether to use the automap buffer as part of the observations")
   parser.add_argument("--labels", type=bool, default=True, help="Whether to use the labels buffer as part of the observations")
   parser.add_argument("--depth", type=bool, default=False, help="Whether to use the depth buffer as part of the observations")
@@ -123,15 +121,15 @@ def parse_args():
     help="Multipliers of '--starting-channels', for the number of channels for each layer of the convolutional network")
   parser.add_argument("--num-res-blocks", type=int, default=1, help="Number of ResNet blocks in the convolutional network")
   parser.add_argument("--starting-channels", type=int, default=32, help="Initial number of channels in the convolutional network")
-  parser.add_argument("--rnd-output-size", type=int, default=256, help="Output size of the predictor and target networks")
+  parser.add_argument("--rnd-output-size", type=int, default=512, help="Output size of the predictor and target networks")
   
   # Algorithm specific arguments
-  parser.add_argument("--num-envs", type=int, default=32, help="the number of parallel game environments")
-  parser.add_argument("--num-steps", type=int, default=128,
+  parser.add_argument("--num-envs", type=int, default=20, help="the number of parallel game environments")
+  parser.add_argument("--num-steps", type=int, default=256,
       help="the number of steps to run in each environment per policy rollout")
   parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
       help="Toggle learning rate annealing for policy and value networks")
-  parser.add_argument("--reward-i-coeff", type=float, default=0.01, help="Coefficient for the intrinsic reward to balance it with the extrinsic reward")
+  parser.add_argument("--reward-i-coeff", type=float, default=0.0075, help="Coefficient for the intrinsic reward to balance it with the extrinsic reward")
   parser.add_argument("--gamma-e", type=float, default=0.999, help="the discount factor gamma for extrinsic rewards")
   parser.add_argument("--gamma-i", type=float, default=0.99, help="the discount factor gamma for intrinsic rewards")
   parser.add_argument("--gae-lambda", type=float, default=0.95, help="the lambda for the general advantage estimation")
@@ -140,7 +138,7 @@ def parse_args():
   parser.add_argument("--norm-adv", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
       help="Toggles advantages normalization")
   parser.add_argument("--clip-coef", type=float, default=0.1, help="the surrogate clipping coefficient")
-  parser.add_argument("--ent-coef", type=float, default=0.01, help="coefficient of the entropy")
+  parser.add_argument("--ent-coef", type=float, default=0.009, help="coefficient of the entropy")
   parser.add_argument("--vf-coef", type=float, default=0.5, help="coefficient of the value function")
   parser.add_argument("--pt-coef", type=float, default=0.5, help="coefficient of the predictor-target loss function")
   parser.add_argument("--max-grad-norm", type=float, default=0.5, help="the maximum norm for the gradient clipping")
@@ -157,15 +155,19 @@ def parse_args():
 
   return args
 
+LIVING_REWARD = -0.005
+
 def make_env(args, seed, idx, run_name):
   def thunk():
     max_buttons_pressed = 0 if args.multidiscrete_actions else 1
-    doom_game_config = DoomGeneralEnvConfig("MAP01", True, -0.01) if args.gym_id == "VizdoomDoomGame-v0" else None
+    doom_game_config = DoomGeneralEnvConfig(args.map, True, LIVING_REWARD) if args.gym_id == "VizdoomDoomGame-v0" else None
 
+    wad_file = "doom2.wad" if re.search(r"E\d+M\d+", args.map) == None else "doom.wad"
+    game_path = os.path.join(VIZDOOM_GAME_PATH, wad_file) 
     env = gym.make(
       args.gym_id, 
       set_window_visible=(idx==0), 
-      game_path=os.path.join(VIZDOOM_GAME_PATH, "doom2.wad"),
+      game_path=game_path,
       resolution=vzd.ScreenResolution.RES_200X150,
       max_buttons_pressed=max_buttons_pressed,
       smart_actions=args.smart_actions,
@@ -175,6 +177,7 @@ def make_env(args, seed, idx, run_name):
       custom_config=doom_game_config,
       always_run=args.always_run,
     )
+    
     env = DoomObservation(env, shape=args.obs_shape)
     env = gym.wrappers.RecordEpisodeStatistics(env)
     if args.capture_video and idx == 0:
@@ -200,8 +203,16 @@ class Agent(nn.Module):
     self.game_var_size = envs.single_observation_space[1].shape[0]
     lstm_input_size = net_output_size + self.game_var_size
     
-    self.target_rnd_net    = fc_layer_init_rnd(nn.Linear(net_output_size, args.rnd_output_size))
-    self.predictor_rnd_net = fc_layer_init_rnd(nn.Linear(net_output_size, args.rnd_output_size))
+    self.pt_downsample_size = list(envs.single_observation_space[0].shape)
+    self.pt_downsample_size[0] = 3 # Only want the rgb observation
+    self.pt_downsample_size[1] //= 2
+    self.pt_downsample_size[2] //= 2
+    self.pt_input_size = np.prod(self.pt_downsample_size, dtype=np.int32)
+    
+    #self.pos_embeddings = [nn.Embedding(128, 32) for _ in range(4)]
+    
+    self.target_rnd_net    = fc_layer_init_norm(nn.Linear(self.pt_input_size, args.rnd_output_size), 1, 0.1)
+    self.predictor_rnd_net = fc_layer_init_norm(nn.Linear(self.pt_input_size, args.rnd_output_size), 1, 0.1)
     
     # Freeze the target network
     for p in self.target_rnd_net.parameters():
@@ -228,7 +239,13 @@ class Agent(nn.Module):
 
   def get_states(self, visual_obs, gamevars_obs, lstm_state, done):
     pixel_conv_out = self.pixel_convnet(visual_obs)
-    hidden = torch.cat([pixel_conv_out, gamevars_obs], -1)
+    
+    ori_health_ammo_vars, pos_vars = torch.split(gamevars_obs, (3,4))
+    # Embed the positional variables
+    #pos_embed = torch.stack([self.pos_embeddings(t) for t in pos_vars]).flatten()
+    
+    
+    hidden = torch.cat([pixel_conv_out, ori_health_ammo_vars], -1)
     
     # LSTM logic
     batch_size = lstm_state[0].shape[1]
@@ -245,14 +262,14 @@ class Agent(nn.Module):
       )
       new_hidden += [h]
     new_hidden = torch.flatten(torch.cat(new_hidden), 0, 1)
-    return pixel_conv_out, new_hidden, lstm_state
+    return new_hidden, lstm_state
 
   def get_value(self, visual_obs, gamevars_obs, lstm_state, done):
-    _, hidden, _ = self.get_states(visual_obs, gamevars_obs, lstm_state, done)
+    hidden, _ = self.get_states(visual_obs, gamevars_obs, lstm_state, done)
     return self.critic(hidden)
 
   def get_action_and_value(self, visual_obs, gamevars_obs, lstm_state, done, action=None):
-    pixel_conv_out, hidden, lstm_state = self.get_states(visual_obs, gamevars_obs, lstm_state, done)
+    hidden, lstm_state = self.get_states(visual_obs, gamevars_obs, lstm_state, done)
     logits = self.actor(hidden)
     
     if self.multidiscrete_actions:
@@ -262,18 +279,20 @@ class Agent(nn.Module):
         action = torch.stack([categorical.sample() for categorical in multi_categoricals])
       logprob = torch.stack([categorical.log_prob(a) for a, categorical in zip(action, multi_categoricals)])
       entropy = torch.stack([categorical.entropy() for categorical in multi_categoricals])
-      return action.T, logprob.sum(0), entropy.sum(0), self.critic(hidden), self._intrinsic_reward(pixel_conv_out), lstm_state
+      return action.T, logprob.sum(0), entropy.sum(0), self.critic(hidden), self._intrinsic_reward(visual_obs), lstm_state
     else:
       probs = Categorical(logits=logits)
       if action is None:
           action = probs.sample()
-      return action, probs.log_prob(action), probs.entropy(), self.critic(hidden), self._intrinsic_reward(pixel_conv_out), lstm_state
+      return action, probs.log_prob(action), probs.entropy(), self.critic(hidden), self._intrinsic_reward(visual_obs), lstm_state
 
-  def _intrinsic_reward(self, pixel_conv_out):
-    pred_targ_input = pixel_conv_out.detach() # NOTE: We don't want the predicted network backprop to affect the rest of the network!
-    pred_state = self.predictor_rnd_net(pred_targ_input)
-    targ_state = self.target_rnd_net(pred_targ_input)
-    return torch.mean(nn.functional.mse_loss(pred_state, targ_state, reduction='none'), dim=1)
+  def _intrinsic_reward(self, visual_obs):
+    # NOTE: We don't want the predicted network backprop to affect the rest of the network!
+    # Downsample the visual observation, but only the RGB part
+    downsampled_obs = (T.Resize(self.pt_downsample_size[-2:], T.InterpolationMode.BILINEAR)(visual_obs.detach()[:,0:3])).view(-1, self.pt_input_size)
+    pred_state = self.predictor_rnd_net(downsampled_obs)
+    targ_state = self.target_rnd_net(downsampled_obs)
+    return torch.mean(nn.functional.mse_loss(pred_state, targ_state.detach(), reduction='none'), dim=1)
     
 
 if __name__ == "__main__":
@@ -283,23 +302,6 @@ if __name__ == "__main__":
   run_dir = os.path.join("runs", args.gym_id, run_name)
   os.makedirs(run_dir, exist_ok=True)
   
-  if args.track:
-      import wandb
-      wandb.init(
-          project=args.wandb_project_name,
-          entity=args.wandb_entity,
-          sync_tensorboard=True,
-          config=vars(args),
-          name=run_name,
-          monitor_gym=True,
-          save_code=True,
-      )
-  writer = SummaryWriter(run_dir)
-  writer.add_text(
-      "hyperparameters",
-      "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-  )
-
   # TRY NOT TO MODIFY: seeding
   random.seed(args.seed)
   np.random.seed(args.seed)
@@ -312,6 +314,7 @@ if __name__ == "__main__":
   envs = gym.vector.SyncVectorEnv(
       [make_env(args, args.seed + i, i, run_name) for i in range(args.num_envs)]
   )
+  #envs = DoomNormalizeObservation(envs) # NOTE: This doesn't improve convergence and adds more overhead, not worth it
   
   assert args.multidiscrete_actions and isinstance(envs.single_action_space, gym.spaces.MultiDiscrete) or \
     not args.multidiscrete_actions and isinstance(envs.single_action_space, gym.spaces.Discrete), \
@@ -320,7 +323,7 @@ if __name__ == "__main__":
   agent = Agent(args, envs).to(device)
   optimizer = optim.Adam(agent.parameters(), lr=args.learning_rate, eps=1e-5)
   
-  reward_i_normalizer = SimpleNormalizeReward()
+  reward_i_normalizer = SimpleNormalizeReward(args.num_envs)
   
   # ALGO Logic: Storage setup
   obs = torch.zeros((args.num_steps, args.num_envs) + envs.single_observation_space[0].shape).to(device)
@@ -338,6 +341,7 @@ if __name__ == "__main__":
 
   global_step = 0
   init_step   = 0 
+  num_updates = args.total_timesteps // args.batch_size
    
   # Load the model if one was provided
   if args.model is not None and len(args.model) > 0:
@@ -358,7 +362,24 @@ if __name__ == "__main__":
       print("Model loaded!")
     else:
       print(f"Could not find/load model file '{args.model}'")
-    
+
+  if args.track:
+      import wandb
+      wandb.init(
+          project=args.wandb_project_name,
+          entity=args.wandb_entity,
+          sync_tensorboard=True,
+          config=vars(args),
+          name=run_name,
+          monitor_gym=True,
+          save_code=True,
+      )
+  writer = SummaryWriter(run_dir)
+  writer.add_text(
+      "hyperparameters",
+      "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+  )
+
   start_time = time.time()
   
   next_obs_tuple = envs.reset()
@@ -369,8 +390,26 @@ if __name__ == "__main__":
       torch.zeros(agent.lstm.num_layers, args.num_envs, agent.lstm.hidden_size).to(device),
       torch.zeros(agent.lstm.num_layers, args.num_envs, agent.lstm.hidden_size).to(device),
   )  # hidden and cell states (see https://youtu.be/8HyCNIVRbSU)
-  num_updates = args.total_timesteps // args.batch_size
+  
   cum_scores = np.zeros(args.num_envs, dtype=np.float64)
+
+  INTRINSIC_REWARD_CLIP = 100
+  EXPLORE_STEPS = 1000
+  
+  # Run for some fixed number of steps on each environment in order to pre-load the normalizers 
+  # of intrinsic and extrinsic rewards
+  print(f"Starting exploration for {EXPLORE_STEPS} steps...")
+  with torch.no_grad():
+    for _ in range(1000):
+      action, logprob, _, value_i_e, reward_i, next_lstm_state = agent.get_action_and_value(
+        next_obs, next_gamevars, next_lstm_state, next_done
+      )
+      reward_i_normalizer.normalize(np.clip(reward_i.cpu().numpy(), 0, INTRINSIC_REWARD_CLIP))
+      next_obs_tuple, reward_e, done, info = envs.step(action.cpu().numpy())
+      next_obs = torch.Tensor(next_obs_tuple[0]).to(device)
+      next_gamevars = torch.Tensor(next_obs_tuple[1]).to(device)
+      next_done = torch.Tensor(done).to(device)
+  print("Finished exploration, starting training...")
 
   lrnow = args.learning_rate
   for update in range(1, num_updates + 1):
@@ -404,8 +443,8 @@ if __name__ == "__main__":
             next_obs, next_gamevars, next_lstm_state, next_done
           )
           values_i_e[step] = value_i_e
-          reward_i_np = np.clip(reward_i.cpu().numpy(), 0, 5) # Early intrinsic rewards can be very large, clip to avoid blowing-out the normalizer
-          reward_i_np_norm = np.clip(reward_i_normalizer.normalize(reward_i_np), 0, 5) * args.reward_i_coeff
+          reward_i_np = np.clip(reward_i.cpu().numpy(), 0, INTRINSIC_REWARD_CLIP) # Early intrinsic rewards can be very large, clip to avoid blowing-out the normalizer
+          reward_i_np_norm = np.clip(reward_i_normalizer.normalize(reward_i_np) * args.reward_i_coeff, 0, 5)
           total_rewards_i += reward_i_np
           total_rewards_i_norm += reward_i_np_norm
           rewards_i[step] = torch.tensor(reward_i_np_norm).to(device)
@@ -451,6 +490,7 @@ if __name__ == "__main__":
             writer.add_scalar("charts/cumulative_return", cum_scores[env_idx],  global_step)
             
             #writer.add_scalar("charts/episodic_return_extrinsic", item["episode"]["r"], global_step)
+            writer.add_scalar("charts/episodic_return_balanced", item["episode"]["r"]-LIVING_REWARD*item["episode"]["l"], global_step) # What the unnormalized extrinsic return was without the living reward/punishment
             writer.add_scalar("charts/episodic_return", item["episode"]["r"], global_step)
             writer.add_scalar("charts/episodic_return_intrinsic", total_rewards_i[env_idx], global_step)
             writer.add_scalar("charts/episodic_return_i+e", total_return, global_step)
@@ -500,12 +540,15 @@ if __name__ == "__main__":
       b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
       b_dones = dones.reshape(-1)
       
-      b_advantages_i = advantages_i.reshape(-1)
-      b_advantages_e = advantages_e.reshape(-1)
+      #b_advantages_i = advantages_i.reshape(-1)
+      #b_advantages_e = advantages_e.reshape(-1)
       b_returns_i    = returns_i.reshape(-1)
       b_returns_e    = returns_e.reshape(-1)
       b_values_i     = values_i.reshape(-1)
       b_values_e     = values_e.reshape(-1)
+      b_advantages = (advantages_i + 2*advantages_e).reshape(-1)
+      #b_returns    = (returns_i + returns_e).reshape(-1)
+      #b_values     = (values_i + values_e).reshape(-1)
 
       # Optimizing the policy and value network
       assert args.num_envs % args.num_minibatches == 0
@@ -535,25 +578,44 @@ if __name__ == "__main__":
                 approx_kl = ((ratio - 1) - logratio).mean()
                 clipfracs += [((ratio - 1.0).abs() > args.clip_coef).float().mean().item()]
 
+              mb_advantages = b_advantages[mb_inds]
+              if args.norm_adv:
+                mb_advantages = (mb_advantages - mb_advantages.mean()) / (mb_advantages.std() + 1e-8)
+              '''
               mb_advantages_i = b_advantages_i[mb_inds]
               mb_advantages_e = b_advantages_e[mb_inds]
               if args.norm_adv:
                 mb_advantages_i = (mb_advantages_i - mb_advantages_i.mean()) / (mb_advantages_i.std() + 1e-8)
                 mb_advantages_e = (mb_advantages_e - mb_advantages_e.mean()) / (mb_advantages_e.std() + 1e-8)
+              '''
 
               # Policy loss
+              pg_loss1 = -mb_advantages * ratio
+              pg_loss2 = -mb_advantages * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
+              pg_loss = torch.max(pg_loss1, pg_loss2).mean()
+              '''
               pg_loss1_i = -mb_advantages_i * ratio
               pg_loss2_i = -mb_advantages_i * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
               pg_loss_i = torch.max(pg_loss1_i, pg_loss2_i).mean()
-              
               pg_loss1_e = -mb_advantages_e * ratio
               pg_loss2_e = -mb_advantages_e * torch.clamp(ratio, 1 - args.clip_coef, 1 + args.clip_coef)
               pg_loss_e = torch.max(pg_loss1_e, pg_loss2_e).mean()
+              '''
 
               # Value loss
+              '''
+              # NOTE: Combining the values/returns for intrinsic+extrinsic doesn't work!
+              newvalue_i_e = newvalue_i_e.sum(dim=-1)
+              v_loss_unclipped = (newvalue_i_e - b_returns[mb_inds]) ** 2
+              v_clipped = b_values[mb_inds] + torch.clamp(newvalue_i_e - b_values[mb_inds], -args.clip_coef, args.clip_coef)
+              v_loss_clipped = (v_clipped - b_returns[mb_inds]) ** 2
+              v_loss_max = torch.max(v_loss_unclipped, v_loss_clipped)
+              v_loss = 0.5 * v_loss_max.mean()
+              '''
               newvalue_i, newvalue_e = torch.chunk(newvalue_i_e, 2, dim=-1)
               newvalue_i = newvalue_i.reshape(-1)
               newvalue_e = newvalue_e.reshape(-1)
+              
               v_loss_unclipped_i = (newvalue_i - b_returns_i[mb_inds]) ** 2
               v_clipped_i = b_values_i[mb_inds] + torch.clamp(newvalue_i - b_values_i[mb_inds], -args.clip_coef, args.clip_coef)
               v_loss_clipped_i = (v_clipped_i - b_returns_i[mb_inds]) ** 2
@@ -565,10 +627,11 @@ if __name__ == "__main__":
               v_loss_clipped_e = (v_clipped_e - b_returns_e[mb_inds]) ** 2
               v_loss_max_e = torch.max(v_loss_unclipped_e, v_loss_clipped_e)
               v_loss_e = 0.5 * v_loss_max_e.mean()
-
+              v_loss = v_loss_i + v_loss_e
+              
               entropy_loss = entropy.mean()
               pt_loss = pt_loss.mean()
-              loss = (pg_loss_i + pg_loss_e) - entropy_loss * args.ent_coef + (v_loss_i + v_loss_e) * args.vf_coef + pt_loss * args.pt_coef
+              loss = pg_loss - entropy_loss * args.ent_coef + v_loss * args.vf_coef + pt_loss * args.pt_coef
 
               optimizer.zero_grad()
               loss.backward()
@@ -579,24 +642,19 @@ if __name__ == "__main__":
             if approx_kl > args.target_kl:
               break
 
-      y_pred, y_true = b_values_i.cpu().numpy(), b_returns_i.cpu().numpy()
+      y_pred, y_true = (b_values_i+b_values_e).cpu().numpy(), (b_returns_i+b_returns_e).cpu().numpy()
       var_y = np.var(y_true)
-      explained_var_i = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
-      y_pred, y_true = b_values_e.cpu().numpy(), b_returns_e.cpu().numpy()
-      var_y = np.var(y_true)
-      explained_var_e = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+      explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
       writer.add_scalar("charts/learning_rate", optimizer.param_groups[0]["lr"], global_step)
-      writer.add_scalar("losses/value_loss", (v_loss_e + v_loss_i).item(), global_step)
-      writer.add_scalar("losses/policy_loss", (pg_loss_e + pg_loss_i).item(), global_step)
+      writer.add_scalar("losses/value_loss", v_loss.item(), global_step)
+      writer.add_scalar("losses/policy_loss", pg_loss.item(), global_step)
       writer.add_scalar("losses/predictor_target_novelty_loss", pt_loss.item(), global_step)
       writer.add_scalar("losses/entropy", entropy_loss.item(), global_step)
       writer.add_scalar("losses/old_approx_kl", old_approx_kl.item(), global_step)
       writer.add_scalar("losses/approx_kl", approx_kl.item(), global_step)
       writer.add_scalar("losses/clipfrac", np.mean(clipfracs), global_step)
-      writer.add_scalar("losses/explained_variance", explained_var_i+explained_var_e, global_step)
-      writer.add_scalar("losses/explained_variance_intrinsic", explained_var_i, global_step)
-      writer.add_scalar("losses/explained_variance_extrinsic", explained_var_e, global_step)
+      writer.add_scalar("losses/explained_variance", explained_var, global_step)
       print("SPS:", int(global_step / (time.time() - start_time)))
       #writer.add_scalar("charts/SPS", int(global_step-init_step / (time.time() - start_time)), global_step)
 

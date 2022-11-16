@@ -305,8 +305,11 @@ class VizdoomEnv(gym.Env):
         pass
         
     def close(self):
-        if self.viewer:
-          self.viewer.close()
+      super().close()
+      if self.viewer:
+        self.viewer.close()
+      if self.game:
+        self.game.close()
 
     @staticmethod
     def get_keys_to_action():

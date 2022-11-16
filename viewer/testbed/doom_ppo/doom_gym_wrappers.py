@@ -147,3 +147,40 @@ class DoomNormalizeReward(gym.core.Wrapper):
   def normalize(self, rews):
     self.return_rms.update(rews)
     return rews / np.sqrt(self.return_rms.var + self.epsilon)
+  
+  
+  
+class DoomNormalizeObservation(gym.core.Wrapper):
+    def __init__(
+        self,
+        env,
+        epsilon=1e-8,
+    ):
+        super(DoomNormalizeObservation, self).__init__(env)
+        self.num_envs = getattr(env, "num_envs", 1)
+        self.is_vector_env = getattr(env, "is_vector_env", False)
+        if self.is_vector_env:
+            self.obs_rms = RunningMeanStd(shape=self.single_observation_space[0].shape)
+        else:
+            self.obs_rms = RunningMeanStd(shape=self.observation_space[0].shape)
+        self.epsilon = epsilon
+
+    def step(self, action):
+        obs, rews, dones, infos = self.env.step(action)
+        if self.is_vector_env:
+            obs_screen = self.normalize(obs[0])
+        else:
+            obs_screen = self.normalize(np.array([obs[0]]))[0]
+        return (obs_screen,) + obs[1:], rews, dones, infos
+
+    def reset(self):
+        obs = self.env.reset()
+        if self.is_vector_env:
+            obs_screen = self.normalize(obs[0])
+        else:
+            obs_screen = self.normalize(np.array([obs[0]]))[0]
+        return (obs_screen,) + obs[1:]
+
+    def normalize(self, obs):
+        self.obs_rms.update(obs)
+        return (obs - self.obs_rms.mean) / np.sqrt(self.obs_rms.var + self.epsilon)

@@ -21,7 +21,7 @@ from stable_baselines3.common.atari_wrappers import (  # isort:skip
   ClipRewardEnv,
 )
 
-from net_init import fc_layer_init, conv_layer_init
+from net_init import fc_layer_init
 from sd_conv import SDEncoder
 from doom_gym_wrappers import DoomMaxAndSkipEnv, DoomObservation, DoomNormalizeReward
 from doom_general_env_config import DoomGeneralEnvConfig
